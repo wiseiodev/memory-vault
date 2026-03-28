@@ -7,6 +7,7 @@ Prefer repo commands over tool-specific one-offs:
 - `pnpm test` for unit tests
 - `pnpm build` for production verification
 - `pnpm qc` for the combined quality pass
+- `pnpm commit:check` to validate recent commit messages
 
 Keep workflow guidance here focused on repo habits. Linear-specific process belongs in [linear.md](./linear.md).
 

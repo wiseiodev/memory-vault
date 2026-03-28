@@ -16,4 +16,6 @@ Prefer putting the closing keyword in the commit-message footer or PR descriptio
 
 Use the repo commit template at `.gitmessage.txt` and the GitHub PR template in `.github/pull_request_template.md` as the default shapes for commits and PRs.
 
+Commit messages are enforced locally with `commitlint`. They must use a conventional-commit subject and include a footer line with a Linear magic word like `Completes LAB-123`.
+
 Do not manually move issues to `Done` when the git and PR integration is expected to update Linear automatically through linked branches, commits, and closing keywords.
