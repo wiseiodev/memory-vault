@@ -4,6 +4,8 @@ import { redirect } from 'next/navigation';
 import { GoogleSignInButton } from '@/components/auth/google-sign-in-button';
 import { getSession } from '@/lib/server/auth/session';
 
+export const dynamic = 'force-dynamic';
+
 export default async function LoginPage() {
   const session = await getSession();
 

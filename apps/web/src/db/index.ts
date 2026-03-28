@@ -3,29 +3,38 @@ import { Pool } from 'pg';
 
 import * as schema from './schema';
 
-const connectionString = process.env.POSTGRES_URL ?? process.env.DATABASE_URL;
-
-if (!connectionString) {
-  throw new Error(
-    'Missing a pooled Postgres connection string. Expected POSTGRES_URL or DATABASE_URL.',
-  );
-}
-
 declare global {
   var __memoryVaultPool: Pool | undefined;
 }
 
-const pool =
-  globalThis.__memoryVaultPool ??
-  new Pool({
-    connectionString,
-  });
+function getConnectionString() {
+  const connectionString = process.env.POSTGRES_URL ?? process.env.DATABASE_URL;
 
-if (process.env.NODE_ENV !== 'production') {
-  globalThis.__memoryVaultPool = pool;
+  if (!connectionString) {
+    throw new Error(
+      'Missing a pooled Postgres connection string. Expected POSTGRES_URL or DATABASE_URL.',
+    );
+  }
+
+  return connectionString;
 }
 
-export { pool };
-export const db = drizzle(pool, {
-  schema,
-});
+export function getPool() {
+  const pool =
+    globalThis.__memoryVaultPool ??
+    new Pool({
+      connectionString: getConnectionString(),
+    });
+
+  if (process.env.NODE_ENV !== 'production') {
+    globalThis.__memoryVaultPool = pool;
+  }
+
+  return pool;
+}
+
+export function getDb() {
+  return drizzle(getPool(), {
+    schema,
+  });
+}

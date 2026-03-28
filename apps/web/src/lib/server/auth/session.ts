@@ -4,14 +4,14 @@ import { headers } from 'next/headers';
 import { redirect } from 'next/navigation';
 import { cache } from 'react';
 
-import { auth } from '@/auth';
+import { getAuth } from '@/auth';
 
 type RequireSessionOptions = {
   redirectTo?: string;
 };
 
 export const getSession = cache(async () =>
-  auth.api.getSession({
+  getAuth().api.getSession({
     headers: await headers(),
   }),
 );
@@ -27,7 +27,7 @@ export async function requireSession(options: RequireSessionOptions = {}) {
 }
 
 export async function getSessionFromRequest(requestHeaders: Headers) {
-  return auth.api.getSession({
+  return getAuth().api.getSession({
     headers: requestHeaders,
   });
 }

@@ -4,6 +4,8 @@ import type { ReactNode } from 'react';
 import { SignOutButton } from '@/components/auth/sign-out-button';
 import { requireSession } from '@/lib/server/auth/session';
 
+export const dynamic = 'force-dynamic';
+
 type AppLayoutProps = {
   children: ReactNode;
 };
