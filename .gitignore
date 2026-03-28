@@ -1,0 +1,34 @@
+# dependencies
+node_modules
+.pnpm-store
+
+# turbo
+.turbo
+
+# next
+.next
+out
+
+# builds
+dist
+coverage
+
+# environment
+.env
+.env.*
+!.env.example
+
+# vercel
+.vercel
+
+# logs
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+.pnpm-debug.log*
+
+# system
+.DS_Store
+
+# typescript
+*.tsbuildinfo

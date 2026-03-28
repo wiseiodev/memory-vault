@@ -1,0 +1,55 @@
+{
+  "$schema": "https://biomejs.dev/schemas/2.4.9/schema.json",
+  "extends": ["./packages/biome-config/base.jsonc"],
+  "files": {
+    "ignoreUnknown": true,
+    "includes": [
+      "**",
+      "./emails/**",
+      "!**/node_modules",
+      "!**/.next",
+      "!**/dist",
+      "!**/build",
+      "!**/globals.css",
+      "!**/playwright-report",
+      "!**/test-results",
+      "!.claude",
+      "!.github/skills"
+    ]
+  },
+  "overrides": [
+    {
+      "includes": ["apps/*/src/app/**"],
+      "linter": {
+        "rules": {
+          "style": {
+            "noRestrictedImports": {
+              "level": "error",
+              "options": {
+                "patterns": [
+                  {
+                    "group": ["@/features/*/**"],
+                    "message": "Deep imports into features are forbidden. Use the public API from '@/features/[feature]'."
+                  }
+                ]
+              }
+            }
+          }
+        }
+      }
+    },
+    {
+      "includes": [
+        "apps/*/src/app/hub/layout.tsx",
+        "apps/*/src/app/admin/layout.tsx"
+      ],
+      "linter": {
+        "rules": {
+          "style": {
+            "noRestrictedImports": "off"
+          }
+        }
+      }
+    }
+  ]
+}
