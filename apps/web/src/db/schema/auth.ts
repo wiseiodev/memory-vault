@@ -12,7 +12,7 @@ export const user = pgTable(
     image: text('image'),
     ...timestamps,
   },
-  (table) => [index('user_email_idx').on(table.email)],
+  () => [],
 );
 
 export const session = pgTable(
@@ -28,10 +28,7 @@ export const session = pgTable(
       .notNull()
       .references(() => user.id, { onDelete: 'cascade' }),
   },
-  (table) => [
-    index('session_token_idx').on(table.token),
-    index('session_user_id_idx').on(table.userId),
-  ],
+  (table) => [index('session_user_id_idx').on(table.userId)],
 );
 
 export const account = pgTable(
