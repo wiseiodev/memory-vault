@@ -1,9 +1,14 @@
 import 'server-only';
 
+import { ORPCError } from '@orpc/server';
 import { generateId } from '@/db/columns/id';
+import { createSpaceRepository } from '@/features/spaces';
 import { buildSourceBlobObjectKey } from './object-key';
 import { createUploadRepository, type UploadRepository } from './repository';
-import { resolveUploadSpace } from './space-resolution';
+import {
+  resolveUploadSpace,
+  type UploadSpaceRepository,
+} from './space-resolution';
 import {
   createPresignedDownload,
   createPresignedUpload,
@@ -11,16 +16,6 @@ import {
   getStorageConfig,
   headObject,
 } from './storage';
-
-export class UploadFlowError extends Error {
-  constructor(
-    message: string,
-    readonly statusCode: number,
-  ) {
-    super(message);
-    this.name = 'UploadFlowError';
-  }
-}
 
 type ReserveUploadInput = {
   byteSize: number;
@@ -67,17 +62,16 @@ export async function reserveUpload(
   deps: Pick<
     ServiceDeps,
     'createPresignedUpload' | 'now' | 'repository' | 'storageConfig'
-  > = {
+  > & { spaceRepository: UploadSpaceRepository } = {
     createPresignedUpload,
     now: () => new Date(),
     repository: createUploadRepository(),
+    spaceRepository: createSpaceRepository(),
   },
 ) {
-  validateReserveInput(input);
-
   const space = await resolveUploadSpace({
     requestedSpaceId: input.spaceId,
-    repository: deps.repository,
+    repository: deps.spaceRepository,
     userId: input.userId,
   });
   const blobId = generateId('blob');
@@ -155,13 +149,6 @@ export async function completeUpload(
     },
   },
 ) {
-  if (!input.sourceBlobId || !input.sourceItemId) {
-    throw new UploadFlowError(
-      'sourceItemId and sourceBlobId are required.',
-      400,
-    );
-  }
-
   const ownedBlob = await deps.repository.findOwnedBlobForCompletion({
     sourceBlobId: input.sourceBlobId,
     sourceItemId: input.sourceItemId,
@@ -169,7 +156,9 @@ export async function completeUpload(
   });
 
   if (!ownedBlob) {
-    throw new UploadFlowError('Upload not found for this user.', 404);
+    throw new ORPCError('NOT_FOUND', {
+      message: 'Upload not found for this user.',
+    });
   }
 
   const headedObject = await (deps.storage ?? { headObject }).headObject({
@@ -177,7 +166,9 @@ export async function completeUpload(
   });
 
   if (!headedObject) {
-    throw new UploadFlowError('Uploaded object was not found in storage.', 409);
+    throw new ORPCError('CONFLICT', {
+      message: 'Uploaded object was not found in storage.',
+    });
   }
 
   const completedAt = deps.now();
@@ -192,7 +183,9 @@ export async function completeUpload(
   });
 
   if (!updatedBlob) {
-    throw new UploadFlowError('Upload not found for this user.', 404);
+    throw new ORPCError('NOT_FOUND', {
+      message: 'Upload not found for this user.',
+    });
   }
 
   return {
@@ -216,13 +209,6 @@ export async function deleteUpload(
     repository: createUploadRepository(),
   },
 ) {
-  if (!input.sourceBlobId || !input.sourceItemId) {
-    throw new UploadFlowError(
-      'sourceItemId and sourceBlobId are required.',
-      400,
-    );
-  }
-
   const ownedBlob = await deps.repository.findOwnedBlobForCompletion({
     sourceBlobId: input.sourceBlobId,
     sourceItemId: input.sourceItemId,
@@ -230,7 +216,9 @@ export async function deleteUpload(
   });
 
   if (!ownedBlob) {
-    throw new UploadFlowError('Upload not found for this user.', 404);
+    throw new ORPCError('NOT_FOUND', {
+      message: 'Upload not found for this user.',
+    });
   }
 
   await (deps.deleteObject ?? deleteObject)({
@@ -245,7 +233,9 @@ export async function deleteUpload(
   });
 
   if (!deleted) {
-    throw new UploadFlowError('Upload not found for this user.', 404);
+    throw new ORPCError('NOT_FOUND', {
+      message: 'Upload not found for this user.',
+    });
   }
 
   return {
@@ -262,21 +252,21 @@ export async function getDownloadUrl(
     repository: createUploadRepository(),
   },
 ) {
-  if (!input.sourceBlobId) {
-    throw new UploadFlowError('sourceBlobId is required.', 400);
-  }
-
   const ownedBlob = await deps.repository.findOwnedBlobForDownload({
     sourceBlobId: input.sourceBlobId,
     userId: input.userId,
   });
 
   if (!ownedBlob) {
-    throw new UploadFlowError('Upload not found for this user.', 404);
+    throw new ORPCError('NOT_FOUND', {
+      message: 'Upload not found for this user.',
+    });
   }
 
   if (!ownedBlob.uploadedAt) {
-    throw new UploadFlowError('Only uploaded files can be downloaded.', 409);
+    throw new ORPCError('CONFLICT', {
+      message: 'Only uploaded files can be downloaded.',
+    });
   }
 
   return (deps.createPresignedDownload ?? createPresignedDownload)({
@@ -310,22 +300,4 @@ export async function listUploads(
           : 'pending',
     uploadedAt: upload.uploadedAt,
   }));
-}
-
-function validateReserveInput(input: ReserveUploadInput) {
-  if (typeof input.filename !== 'string' || !input.filename.trim()) {
-    throw new UploadFlowError('filename is required.', 400);
-  }
-
-  if (typeof input.contentType !== 'string' || !input.contentType.trim()) {
-    throw new UploadFlowError('contentType is required.', 400);
-  }
-
-  if (
-    typeof input.byteSize !== 'number' ||
-    !Number.isInteger(input.byteSize) ||
-    input.byteSize < 0
-  ) {
-    throw new UploadFlowError('byteSize must be a non-negative integer.', 400);
-  }
 }

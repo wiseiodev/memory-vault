@@ -1,8 +1,7 @@
-import Link from 'next/link';
-
-import type { UploadListItem } from '@/lib/server/uploads/service';
+import type { UploadListItem } from '../service';
 
 import { DeleteUploadButton } from './delete-upload-button';
+import { DownloadButton } from './download-button';
 
 type UploadListCardProps = {
   uploads: UploadListItem[];
@@ -70,12 +69,7 @@ export function UploadListCard({ uploads }: UploadListCardProps) {
 
               <div className='flex flex-col items-start gap-2 lg:items-end'>
                 {upload.status === 'uploaded' ? (
-                  <Link
-                    href={`/api/uploads/download?sourceBlobId=${encodeURIComponent(upload.sourceBlobId)}`}
-                    className='inline-flex items-center rounded-full bg-slate-950 px-4 py-2 text-xs font-semibold uppercase tracking-[0.14em] text-white transition hover:bg-slate-800'
-                  >
-                    Download
-                  </Link>
+                  <DownloadButton sourceBlobId={upload.sourceBlobId} />
                 ) : (
                   <span className='text-xs font-medium text-slate-500'>
                     Download available after upload completes

@@ -1,13 +1,8 @@
-import { UploadListCard } from '@/components/uploads/upload-list-card';
-import { UploadVerificationCard } from '@/components/uploads/upload-verification-card';
-import { requireSession } from '@/lib/server/auth/session';
-import { listUploads } from '@/lib/server/uploads/service';
+import { UploadListCard, UploadVerificationCard } from '@/features/uploads';
+import { rpc } from '@/rpc/client';
 
 export default async function AppPage() {
-  const session = await requireSession();
-  const uploads = await listUploads({
-    userId: session.user.id,
-  });
+  const uploads = await rpc.uploads.list();
 
   return (
     <div className='space-y-6'>
