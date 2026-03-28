@@ -3,6 +3,8 @@
 import { useRouter } from 'next/navigation';
 import { startTransition, useState } from 'react';
 
+import { rpc } from '@/rpc/client';
+
 type DeleteUploadButtonProps = {
   sourceBlobId: string;
   sourceItemId: string;
@@ -23,21 +25,10 @@ export function DeleteUploadButton({
       setIsPending(true);
 
       try {
-        const response = await fetch('/api/uploads/delete', {
-          body: JSON.stringify({
-            sourceBlobId,
-            sourceItemId,
-          }),
-          headers: {
-            'Content-Type': 'application/json',
-          },
-          method: 'POST',
+        await rpc.uploads.delete({
+          sourceBlobId,
+          sourceItemId,
         });
-        const payload = await response.json();
-
-        if (!response.ok) {
-          throw new Error(payload.error ?? 'Unable to delete upload.');
-        }
 
         router.refresh();
       } catch (deleteError) {

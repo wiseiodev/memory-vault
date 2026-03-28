@@ -4,27 +4,32 @@ vi.mock('@/db/columns/id', () => ({
   generateId: vi.fn((prefix: string) => `${prefix}_123`),
 }));
 
+import { ORPCError } from '@orpc/server';
 import {
   completeUpload,
   deleteUpload,
   getDownloadUrl,
   listUploads,
   reserveUpload,
-  type UploadFlowError,
 } from './service';
 
 function createRepositoryMocks() {
   return {
     abandonReservation: vi.fn(),
-    createDefaultSpaceForUser: vi.fn(),
     createReservation: vi.fn(),
     deleteOwnedUpload: vi.fn(),
     finalizeOwnedUpload: vi.fn(),
-    findDefaultSpaceForUser: vi.fn(),
     findOwnedBlobForCompletion: vi.fn(),
     findOwnedBlobForDownload: vi.fn(),
-    findOwnedSpaceById: vi.fn(),
     listOwnedUploads: vi.fn(),
+  };
+}
+
+function createSpaceRepositoryMocks() {
+  return {
+    createDefaultForUser: vi.fn(),
+    findDefaultForUser: vi.fn(),
+    findOwnedById: vi.fn(),
   };
 }
 
@@ -56,12 +61,15 @@ describe('reserveUpload', () => {
         repository: {
           ...createRepositoryMocks(),
           createReservation,
-          createDefaultSpaceForUser: vi.fn(async () => ({
+        },
+        spaceRepository: {
+          ...createSpaceRepositoryMocks(),
+          createDefaultForUser: vi.fn(async () => ({
             id: 'spc_123',
             name: 'Personal',
           })),
-          findDefaultSpaceForUser: vi.fn(async () => null),
-          findOwnedSpaceById: vi.fn(async () => null),
+          findDefaultForUser: vi.fn(async () => null),
+          findOwnedById: vi.fn(async () => null),
         },
         storageConfig: {
           bucket: 'memory-vault-bucket',
@@ -120,12 +128,15 @@ describe('reserveUpload', () => {
                 'spaces/spc_123/sources/src_123/blobs/blob_123/Quarterly-Notes.pdf',
               sourceItemId: 'src_123',
             })),
-            createDefaultSpaceForUser: vi.fn(async () => ({
+          },
+          spaceRepository: {
+            ...createSpaceRepositoryMocks(),
+            createDefaultForUser: vi.fn(async () => ({
               id: 'spc_123',
               name: 'Personal',
             })),
-            findDefaultSpaceForUser: vi.fn(async () => null),
-            findOwnedSpaceById: vi.fn(async () => null),
+            findDefaultForUser: vi.fn(async () => null),
+            findOwnedById: vi.fn(async () => null),
           },
           storageConfig: {
             bucket: 'memory-vault-bucket',
@@ -162,10 +173,11 @@ describe('completeUpload', () => {
           },
         },
       ),
-    ).rejects.toMatchObject({
-      message: 'Upload not found for this user.',
-      statusCode: 404,
-    } satisfies Partial<UploadFlowError>);
+    ).rejects.toThrow(
+      new ORPCError('NOT_FOUND', {
+        message: 'Upload not found for this user.',
+      }),
+    );
   });
 
   it('updates blob metadata after a successful object HEAD', async () => {
@@ -297,10 +309,11 @@ describe('getDownloadUrl', () => {
           },
         },
       ),
-    ).rejects.toMatchObject({
-      message: 'Only uploaded files can be downloaded.',
-      statusCode: 409,
-    } satisfies Partial<UploadFlowError>);
+    ).rejects.toThrow(
+      new ORPCError('CONFLICT', {
+        message: 'Only uploaded files can be downloaded.',
+      }),
+    );
   });
 });
 

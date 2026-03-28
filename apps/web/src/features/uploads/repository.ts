@@ -1,23 +1,13 @@
 import 'server-only';
 
 import { and, desc, eq, isNull } from 'drizzle-orm';
-import { DatabaseError } from 'pg';
 
 import { getDb } from '@/db';
-import { generateId } from '@/db/columns/id';
 import { sourceBlobs, sourceItems, spaces } from '@/db/schema';
-
-import type { UploadSpaceRepository } from './space-resolution';
 
 type Db = ReturnType<typeof getDb>;
 
-export type UploadRepository = UploadSpaceRepository & {
-  deleteOwnedUpload(input: {
-    deletedAt: Date;
-    sourceBlobId: string;
-    sourceItemId: string;
-    userId: string;
-  }): Promise<boolean>;
+export type UploadRepository = {
   abandonReservation(input: {
     abandonedAt: Date;
     sourceBlobId: string;
@@ -38,6 +28,12 @@ export type UploadRepository = UploadSpaceRepository & {
     objectKey: string;
     sourceItemId: string;
   }>;
+  deleteOwnedUpload(input: {
+    deletedAt: Date;
+    sourceBlobId: string;
+    sourceItemId: string;
+    userId: string;
+  }): Promise<boolean>;
   finalizeOwnedUpload(input: {
     byteSize: bigint;
     contentType: string | null;
@@ -92,84 +88,6 @@ export type UploadRepository = UploadSpaceRepository & {
 
 export function createUploadRepository(db: Db = getDb()): UploadRepository {
   return {
-    async createDefaultSpaceForUser(input) {
-      try {
-        const [createdSpace] = await db
-          .insert(spaces)
-          .values({
-            id: generateId('spc'),
-            isDefault: true,
-            name: 'Personal',
-            ownerUserId: input.userId,
-          })
-          .returning({
-            id: spaces.id,
-            name: spaces.name,
-          });
-
-        return createdSpace;
-      } catch (error) {
-        if (!(error instanceof DatabaseError) || error.code !== '23505') {
-          throw error;
-        }
-
-        const existingDefaultSpace = await this.findDefaultSpaceForUser(input);
-        if (!existingDefaultSpace) {
-          throw error;
-        }
-
-        return existingDefaultSpace;
-      }
-    },
-    async deleteOwnedUpload(input) {
-      return db.transaction(async (tx) => {
-        const [ownedUpload] = await tx
-          .select({
-            sourceBlobId: sourceBlobs.id,
-            sourceItemId: sourceItems.id,
-          })
-          .from(sourceBlobs)
-          .innerJoin(sourceItems, eq(sourceBlobs.sourceItemId, sourceItems.id))
-          .innerJoin(spaces, eq(sourceItems.spaceId, spaces.id))
-          .where(
-            and(
-              eq(sourceBlobs.id, input.sourceBlobId),
-              eq(sourceItems.id, input.sourceItemId),
-              eq(spaces.ownerUserId, input.userId),
-              isNull(sourceBlobs.deletedAt),
-              isNull(sourceItems.deletedAt),
-              isNull(spaces.deletedAt),
-              isNull(spaces.archivedAt),
-            ),
-          )
-          .limit(1);
-
-        if (!ownedUpload) {
-          return false;
-        }
-
-        await tx
-          .update(sourceBlobs)
-          .set({
-            archivedAt: input.deletedAt,
-            deletedAt: input.deletedAt,
-            updatedAt: input.deletedAt,
-          })
-          .where(eq(sourceBlobs.id, input.sourceBlobId));
-
-        await tx
-          .update(sourceItems)
-          .set({
-            archivedAt: input.deletedAt,
-            deletedAt: input.deletedAt,
-            status: 'archived',
-            updatedAt: input.deletedAt,
-          })
-          .where(eq(sourceItems.id, input.sourceItemId));
-
-        return true;
-      });
-    },
     async abandonReservation(input) {
       await db.transaction(async (tx) => {
         await tx
@@ -244,6 +162,55 @@ export function createUploadRepository(db: Db = getDb()): UploadRepository {
           });
 
         return createdBlob;
+      });
+    },
+    async deleteOwnedUpload(input) {
+      return db.transaction(async (tx) => {
+        const [ownedUpload] = await tx
+          .select({
+            sourceBlobId: sourceBlobs.id,
+            sourceItemId: sourceItems.id,
+          })
+          .from(sourceBlobs)
+          .innerJoin(sourceItems, eq(sourceBlobs.sourceItemId, sourceItems.id))
+          .innerJoin(spaces, eq(sourceItems.spaceId, spaces.id))
+          .where(
+            and(
+              eq(sourceBlobs.id, input.sourceBlobId),
+              eq(sourceItems.id, input.sourceItemId),
+              eq(spaces.ownerUserId, input.userId),
+              isNull(sourceBlobs.deletedAt),
+              isNull(sourceItems.deletedAt),
+              isNull(spaces.deletedAt),
+              isNull(spaces.archivedAt),
+            ),
+          )
+          .limit(1);
+
+        if (!ownedUpload) {
+          return false;
+        }
+
+        await tx
+          .update(sourceBlobs)
+          .set({
+            archivedAt: input.deletedAt,
+            deletedAt: input.deletedAt,
+            updatedAt: input.deletedAt,
+          })
+          .where(eq(sourceBlobs.id, input.sourceBlobId));
+
+        await tx
+          .update(sourceItems)
+          .set({
+            archivedAt: input.deletedAt,
+            deletedAt: input.deletedAt,
+            status: 'archived',
+            updatedAt: input.deletedAt,
+          })
+          .where(eq(sourceItems.id, input.sourceItemId));
+
+        return true;
       });
     },
     async finalizeOwnedUpload(input) {
@@ -344,25 +311,6 @@ export function createUploadRepository(db: Db = getDb()): UploadRepository {
         };
       });
     },
-    async findDefaultSpaceForUser(input) {
-      const [space] = await db
-        .select({
-          id: spaces.id,
-          name: spaces.name,
-        })
-        .from(spaces)
-        .where(
-          and(
-            eq(spaces.ownerUserId, input.userId),
-            eq(spaces.isDefault, true),
-            isNull(spaces.deletedAt),
-            isNull(spaces.archivedAt),
-          ),
-        )
-        .limit(1);
-
-      return space ?? null;
-    },
     async findOwnedBlobForCompletion(input) {
       const [ownedBlob] = await db
         .select({
@@ -412,25 +360,6 @@ export function createUploadRepository(db: Db = getDb()): UploadRepository {
         .limit(1);
 
       return ownedBlob ?? null;
-    },
-    async findOwnedSpaceById(input) {
-      const [space] = await db
-        .select({
-          id: spaces.id,
-          name: spaces.name,
-        })
-        .from(spaces)
-        .where(
-          and(
-            eq(spaces.id, input.spaceId),
-            eq(spaces.ownerUserId, input.userId),
-            isNull(spaces.deletedAt),
-            isNull(spaces.archivedAt),
-          ),
-        )
-        .limit(1);
-
-      return space ?? null;
     },
     async listOwnedUploads(input) {
       const uploads = await db

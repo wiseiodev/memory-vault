@@ -16,7 +16,15 @@ function getConnectionString() {
     );
   }
 
-  return connectionString;
+  const url = new URL(connectionString);
+  if (
+    url.searchParams.get('sslmode') === 'require' ||
+    url.searchParams.get('sslmode') === 'prefer'
+  ) {
+    url.searchParams.set('sslmode', 'verify-full');
+  }
+
+  return url.toString();
 }
 
 export function getPool() {

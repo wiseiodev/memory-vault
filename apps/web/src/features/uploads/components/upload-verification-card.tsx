@@ -3,27 +3,9 @@
 import { useRouter } from 'next/navigation';
 import { startTransition, useState } from 'react';
 
-type CompletedUpload = {
-  bucket: string | null;
-  byteSize: string | null;
-  contentType: string | null;
-  etag: string | null;
-  objectKey: string;
-  sourceBlobId: string;
-  sourceItemId: string;
-  spaceId: string;
-  uploadedAt: string | null;
-};
+import { rpc } from '@/rpc/client';
 
-type ReservedUpload = {
-  objectKey: string;
-  sourceBlobId: string;
-  sourceItemId: string;
-  spaceId: string;
-  uploadHeaders: Record<string, string>;
-  uploadMethod: 'PUT';
-  uploadUrl: string;
-};
+type CompleteResult = Awaited<ReturnType<typeof rpc.uploads.complete>>;
 
 export function UploadVerificationCard() {
   const router = useRouter();
@@ -33,7 +15,7 @@ export function UploadVerificationCard() {
   const [phase, setPhase] = useState<
     'idle' | 'reserving' | 'uploading' | 'completing' | 'complete'
   >('idle');
-  const [result, setResult] = useState<CompletedUpload | null>(null);
+  const [result, setResult] = useState<CompleteResult | null>(null);
 
   function handleSubmit() {
     if (!file) {
@@ -49,7 +31,11 @@ export function UploadVerificationCard() {
 
       try {
         setPhase('reserving');
-        const reservedUpload = await reserveUpload(file);
+        const reservedUpload = await rpc.uploads.reserve({
+          byteSize: file.size,
+          contentType: file.type || 'application/octet-stream',
+          filename: file.name,
+        });
 
         setPhase('uploading');
         const uploadResponse = await fetch(reservedUpload.uploadUrl, {
@@ -63,7 +49,10 @@ export function UploadVerificationCard() {
         }
 
         setPhase('completing');
-        const completedUpload = await completeUploadReservation(reservedUpload);
+        const completedUpload = await rpc.uploads.complete({
+          sourceBlobId: reservedUpload.sourceBlobId,
+          sourceItemId: reservedUpload.sourceItemId,
+        });
         setResult(completedUpload);
         setPhase('complete');
         router.refresh();
@@ -163,50 +152,6 @@ export function UploadVerificationCard() {
       </div>
     </article>
   );
-}
-
-async function reserveUpload(file: File): Promise<ReservedUpload> {
-  const response = await fetch('/api/uploads/reserve', {
-    body: JSON.stringify({
-      byteSize: file.size,
-      contentType: file.type || 'application/octet-stream',
-      filename: file.name,
-    }),
-    headers: {
-      'Content-Type': 'application/json',
-    },
-    method: 'POST',
-  });
-
-  const payload = await response.json();
-
-  if (!response.ok) {
-    throw new Error(payload.error ?? 'Unable to reserve upload.');
-  }
-
-  return payload;
-}
-
-async function completeUploadReservation(
-  reservedUpload: ReservedUpload,
-): Promise<CompletedUpload> {
-  const response = await fetch('/api/uploads/complete', {
-    body: JSON.stringify({
-      sourceBlobId: reservedUpload.sourceBlobId,
-      sourceItemId: reservedUpload.sourceItemId,
-    }),
-    headers: {
-      'Content-Type': 'application/json',
-    },
-    method: 'POST',
-  });
-  const payload = await response.json();
-
-  if (!response.ok) {
-    throw new Error(payload.error ?? 'Unable to finalize upload.');
-  }
-
-  return payload;
 }
 
 function labelForPhase(
