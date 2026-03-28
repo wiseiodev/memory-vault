@@ -6,28 +6,40 @@ function toOrigin(url: string) {
   }
 }
 
-type BuildTrustedOriginsInput = {
+function toHost(url: string) {
+  try {
+    return new URL(url).host;
+  } catch {
+    return null;
+  }
+}
+
+type BuildBaseUrlOptionsInput = {
   baseUrl?: string;
-  vercelUrl?: string;
+  nodeEnv?: string;
 };
 
-export function buildTrustedOrigins({
+export function buildBaseUrlOptions({
   baseUrl,
-  vercelUrl,
-}: BuildTrustedOriginsInput) {
-  const origins = new Set<string>(['http://localhost:3000']);
+  nodeEnv = process.env.NODE_ENV,
+}: BuildBaseUrlOptionsInput) {
+  const allowedHosts = new Set<string>([
+    'localhost:*',
+    '127.0.0.1:*',
+    '*.vercel.app',
+  ]);
 
-  const normalizedBaseUrl = baseUrl ? toOrigin(baseUrl) : null;
-  if (normalizedBaseUrl) {
-    origins.add(normalizedBaseUrl);
+  const fallback = baseUrl ? toOrigin(baseUrl) : null;
+  const fallbackHost = baseUrl ? toHost(baseUrl) : null;
+
+  if (fallbackHost) {
+    allowedHosts.add(fallbackHost);
   }
 
-  if (vercelUrl) {
-    const normalizedVercelUrl = toOrigin(`https://${vercelUrl}`);
-    if (normalizedVercelUrl) {
-      origins.add(normalizedVercelUrl);
-    }
-  }
-
-  return [...origins];
+  return {
+    allowedHosts: [...allowedHosts],
+    fallback: fallback ?? undefined,
+    protocol:
+      nodeEnv === 'development' ? ('http' as const) : ('https' as const),
+  };
 }
