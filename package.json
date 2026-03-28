@@ -8,21 +8,35 @@
   },
   "scripts": {
     "build": "turbo run build",
-    "check": "turbo run check",
-    "check:ci": "turbo run check:ci",
+    "check": "pnpm run check:root && turbo run check",
+    "check:ci": "pnpm run check:root:ci && turbo run check:ci",
+    "check:root": "biome check --write sst.config.ts stacks scripts",
+    "check:root:ci": "biome check sst.config.ts stacks scripts",
     "commit:check": "commitlint --from HEAD~1 --to HEAD",
-    "dev": "turbo run dev --filter=web --ui=tui",
+    "dev": "turbo run dev --ui=tui",
     "env:dev": "vercel env pull apps/web/.env.local",
+    "env:sync": "tsx scripts/sync-vercel-bucket-envs.ts",
     "prepare": "node -e \"const { existsSync, readdirSync } = require('node:fs'); const { join } = require('node:path'); const { spawnSync } = require('node:child_process'); if (!existsSync('.git') || !existsSync('node_modules/.pnpm')) process.exit(0); const entry = readdirSync('node_modules/.pnpm').find((name) => name.startsWith('lefthook@')); if (!entry) process.exit(0); const cli = join('node_modules', '.pnpm', entry, 'node_modules', 'lefthook', 'bin', 'index.js'); if (!existsSync(cli)) process.exit(0); const result = spawnSync(process.execPath, [cli, 'install'], { stdio: 'inherit' }); process.exit(result.status ?? 0);\"",
-    "qc": "turbo run check test build --ui=tui",
+    "qc": "pnpm run check && pnpm run typecheck && turbo run test build --ui=tui",
+    "sst:dev": "sst dev",
+    "sst:deploy": "sst deploy",
+    "sst:deploy:preview": "sst deploy --stage preview",
+    "sst:deploy:prod": "sst deploy --stage prod",
     "test": "turbo run test",
-    "typecheck": "turbo run typecheck"
+    "typecheck": "pnpm run typecheck:root && turbo run typecheck",
+    "typecheck:root": "tsc --noEmit -p tsconfig.json"
   },
   "devDependencies": {
     "@biomejs/biome": "^2.4.9",
     "@commitlint/cli": "^20.5.0",
     "@commitlint/config-conventional": "^20.5.0",
+    "@types/node": "^25.5.0",
     "lefthook": "^2.1.4",
+    "tsx": "^4.20.6",
     "turbo": "^2.8.20"
+  },
+  "dependencies": {
+    "aws-cdk-lib": "^2.245.0",
+    "sst": "2.49.8"
   }
 }
