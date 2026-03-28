@@ -11,6 +11,7 @@
       "!**/dist",
       "!**/build",
       "!**/globals.css",
+      "!**/next-env.d.ts",
       "!**/playwright-report",
       "!**/test-results",
       "!.claude",
