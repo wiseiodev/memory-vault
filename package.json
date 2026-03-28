@@ -12,7 +12,7 @@
     "check:ci": "turbo run check:ci",
     "commit:check": "commitlint --from HEAD~1 --to HEAD",
     "dev": "turbo run dev --filter=web --ui=tui",
-    "env:dev": "vercel env pull .env.local",
+    "env:dev": "vercel env pull apps/web/.env.local",
     "prepare": "node -e \"const { existsSync, readdirSync } = require('node:fs'); const { join } = require('node:path'); const { spawnSync } = require('node:child_process'); if (!existsSync('.git') || !existsSync('node_modules/.pnpm')) process.exit(0); const entry = readdirSync('node_modules/.pnpm').find((name) => name.startsWith('lefthook@')); if (!entry) process.exit(0); const cli = join('node_modules', '.pnpm', entry, 'node_modules', 'lefthook', 'bin', 'index.js'); if (!existsSync(cli)) process.exit(0); const result = spawnSync(process.execPath, [cli, 'install'], { stdio: 'inherit' }); process.exit(result.status ?? 0);\"",
     "qc": "turbo run check test build --ui=tui",
     "test": "turbo run test",
