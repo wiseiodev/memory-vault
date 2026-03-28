@@ -50,7 +50,7 @@ function readRequiredEnvVar(name: string) {
 
   if (!value) {
     throw new Error(
-      'Missing storage env vars. Expected MEMORY_VAULT_BLOB_BUCKET, AWS_REGION, and AWS_ROLE_ARN.',
+      `Missing required environment variable: ${name}. Expected MEMORY_VAULT_BLOB_BUCKET, AWS_REGION, and AWS_ROLE_ARN.`,
     );
   }
 

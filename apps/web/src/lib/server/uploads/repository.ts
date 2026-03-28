@@ -1,6 +1,6 @@
 import 'server-only';
 
-import { and, eq, isNull } from 'drizzle-orm';
+import { and, desc, eq, isNull } from 'drizzle-orm';
 import { DatabaseError } from 'pg';
 
 import { getDb } from '@/db';
@@ -457,16 +457,14 @@ export function createUploadRepository(db: Db = getDb()): UploadRepository {
             isNull(spaces.archivedAt),
           ),
         )
-        .orderBy(sourceItems.createdAt);
+        .orderBy(desc(sourceItems.createdAt));
 
-      return uploads
-        .map((upload) => ({
-          ...upload,
-          createdAt: upload.createdAt.toISOString(),
-          filename: upload.filename ?? 'Untitled file',
-          uploadedAt: upload.uploadedAt?.toISOString() ?? null,
-        }))
-        .reverse();
+      return uploads.map((upload) => ({
+        ...upload,
+        createdAt: upload.createdAt.toISOString(),
+        filename: upload.filename ?? 'Untitled file',
+        uploadedAt: upload.uploadedAt?.toISOString() ?? null,
+      }));
     },
   };
 }
