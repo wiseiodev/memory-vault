@@ -1,0 +1,331 @@
+import 'server-only';
+
+import { generateId } from '@/db/columns/id';
+import { buildSourceBlobObjectKey } from './object-key';
+import { createUploadRepository, type UploadRepository } from './repository';
+import { resolveUploadSpace } from './space-resolution';
+import {
+  createPresignedDownload,
+  createPresignedUpload,
+  deleteObject,
+  getStorageConfig,
+  headObject,
+} from './storage';
+
+export class UploadFlowError extends Error {
+  constructor(
+    message: string,
+    readonly statusCode: number,
+  ) {
+    super(message);
+    this.name = 'UploadFlowError';
+  }
+}
+
+type ReserveUploadInput = {
+  byteSize: number;
+  contentType: string;
+  filename: string;
+  spaceId?: string;
+  userId: string;
+};
+
+type CompleteUploadInput = {
+  sourceBlobId: string;
+  sourceItemId: string;
+  userId: string;
+};
+
+type ServiceDeps = {
+  createPresignedDownload?: typeof createPresignedDownload;
+  createPresignedUpload?: typeof createPresignedUpload;
+  deleteObject?: typeof deleteObject;
+  now: () => Date;
+  repository: UploadRepository;
+  storageConfig?: {
+    bucket: string;
+  };
+  storage?: {
+    headObject: typeof headObject;
+  };
+};
+
+export type UploadListItem = {
+  byteSize: string | null;
+  contentType: string | null;
+  createdAt: string;
+  filename: string;
+  objectKey: string;
+  sourceBlobId: string;
+  sourceItemId: string;
+  status: 'failed' | 'pending' | 'uploaded';
+  uploadedAt: string | null;
+};
+
+export async function reserveUpload(
+  input: ReserveUploadInput,
+  deps: Pick<
+    ServiceDeps,
+    'createPresignedUpload' | 'now' | 'repository' | 'storageConfig'
+  > = {
+    createPresignedUpload,
+    now: () => new Date(),
+    repository: createUploadRepository(),
+  },
+) {
+  validateReserveInput(input);
+
+  const space = await resolveUploadSpace({
+    requestedSpaceId: input.spaceId,
+    repository: deps.repository,
+    userId: input.userId,
+  });
+  const blobId = generateId('blob');
+  const sourceItemId = generateId('src');
+  const objectKey = buildSourceBlobObjectKey({
+    filename: input.filename,
+    sourceBlobId: blobId,
+    sourceItemId,
+    spaceId: space.id,
+  });
+  const createdSourceBlob = await deps.repository.createReservation({
+    blobId,
+    bucket: (deps.storageConfig ?? getStorageConfig()).bucket,
+    byteSize: BigInt(input.byteSize),
+    contentType: input.contentType,
+    filename: input.filename,
+    objectKey,
+    spaceId: space.id,
+    sourceItemId,
+    userId: input.userId,
+  });
+
+  try {
+    if (
+      createdSourceBlob.id !== blobId ||
+      createdSourceBlob.objectKey !== objectKey ||
+      createdSourceBlob.sourceItemId !== sourceItemId
+    ) {
+      throw new Error(
+        'Reserved blob object key does not match the canonical path.',
+      );
+    }
+
+    const presignedUpload = await (
+      deps.createPresignedUpload ?? createPresignedUpload
+    )({
+      contentType: input.contentType,
+      objectKey,
+    });
+
+    return {
+      objectKey,
+      sourceBlobId: createdSourceBlob.id,
+      sourceItemId: sourceItemId,
+      spaceId: space.id,
+      uploadHeaders: presignedUpload.uploadHeaders,
+      uploadMethod: 'PUT' as const,
+      uploadUrl: presignedUpload.uploadUrl,
+    };
+  } catch (error) {
+    try {
+      await deps.repository.abandonReservation({
+        abandonedAt: deps.now(),
+        sourceBlobId: blobId,
+        sourceItemId,
+      });
+    } catch (cleanupError) {
+      console.error('Failed to abandon upload reservation after error', {
+        cleanupError,
+        sourceBlobId: blobId,
+        sourceItemId,
+      });
+    }
+    throw error;
+  }
+}
+
+export async function completeUpload(
+  input: CompleteUploadInput,
+  deps: ServiceDeps = {
+    now: () => new Date(),
+    repository: createUploadRepository(),
+    storage: {
+      headObject,
+    },
+  },
+) {
+  if (!input.sourceBlobId || !input.sourceItemId) {
+    throw new UploadFlowError(
+      'sourceItemId and sourceBlobId are required.',
+      400,
+    );
+  }
+
+  const ownedBlob = await deps.repository.findOwnedBlobForCompletion({
+    sourceBlobId: input.sourceBlobId,
+    sourceItemId: input.sourceItemId,
+    userId: input.userId,
+  });
+
+  if (!ownedBlob) {
+    throw new UploadFlowError('Upload not found for this user.', 404);
+  }
+
+  const headedObject = await (deps.storage ?? { headObject }).headObject({
+    objectKey: ownedBlob.objectKey,
+  });
+
+  if (!headedObject) {
+    throw new UploadFlowError('Uploaded object was not found in storage.', 409);
+  }
+
+  const completedAt = deps.now();
+  const updatedBlob = await deps.repository.finalizeOwnedUpload({
+    byteSize: headedObject.byteSize,
+    contentType: headedObject.contentType,
+    etag: headedObject.etag,
+    sourceBlobId: input.sourceBlobId,
+    sourceItemId: input.sourceItemId,
+    uploadedAt: completedAt,
+    userId: input.userId,
+  });
+
+  if (!updatedBlob) {
+    throw new UploadFlowError('Upload not found for this user.', 404);
+  }
+
+  return {
+    bucket: updatedBlob.bucket,
+    byteSize: updatedBlob.byteSize?.toString() ?? null,
+    contentType: updatedBlob.contentType,
+    etag: updatedBlob.etag,
+    objectKey: updatedBlob.objectKey,
+    sourceBlobId: updatedBlob.sourceBlobId,
+    sourceItemId: updatedBlob.sourceItemId,
+    spaceId: updatedBlob.spaceId,
+    uploadedAt: updatedBlob.uploadedAt,
+  };
+}
+
+export async function deleteUpload(
+  input: CompleteUploadInput,
+  deps: Pick<ServiceDeps, 'deleteObject' | 'now' | 'repository'> = {
+    deleteObject,
+    now: () => new Date(),
+    repository: createUploadRepository(),
+  },
+) {
+  if (!input.sourceBlobId || !input.sourceItemId) {
+    throw new UploadFlowError(
+      'sourceItemId and sourceBlobId are required.',
+      400,
+    );
+  }
+
+  const ownedBlob = await deps.repository.findOwnedBlobForCompletion({
+    sourceBlobId: input.sourceBlobId,
+    sourceItemId: input.sourceItemId,
+    userId: input.userId,
+  });
+
+  if (!ownedBlob) {
+    throw new UploadFlowError('Upload not found for this user.', 404);
+  }
+
+  await (deps.deleteObject ?? deleteObject)({
+    objectKey: ownedBlob.objectKey,
+  });
+
+  const deleted = await deps.repository.deleteOwnedUpload({
+    deletedAt: deps.now(),
+    sourceBlobId: input.sourceBlobId,
+    sourceItemId: input.sourceItemId,
+    userId: input.userId,
+  });
+
+  if (!deleted) {
+    throw new UploadFlowError('Upload not found for this user.', 404);
+  }
+
+  return {
+    deleted: true as const,
+    sourceBlobId: input.sourceBlobId,
+    sourceItemId: input.sourceItemId,
+  };
+}
+
+export async function getDownloadUrl(
+  input: Pick<CompleteUploadInput, 'sourceBlobId' | 'userId'>,
+  deps: Pick<ServiceDeps, 'createPresignedDownload' | 'repository'> = {
+    createPresignedDownload,
+    repository: createUploadRepository(),
+  },
+) {
+  if (!input.sourceBlobId) {
+    throw new UploadFlowError('sourceBlobId is required.', 400);
+  }
+
+  const ownedBlob = await deps.repository.findOwnedBlobForDownload({
+    sourceBlobId: input.sourceBlobId,
+    userId: input.userId,
+  });
+
+  if (!ownedBlob) {
+    throw new UploadFlowError('Upload not found for this user.', 404);
+  }
+
+  if (!ownedBlob.uploadedAt) {
+    throw new UploadFlowError('Only uploaded files can be downloaded.', 409);
+  }
+
+  return (deps.createPresignedDownload ?? createPresignedDownload)({
+    objectKey: ownedBlob.objectKey,
+  });
+}
+
+export async function listUploads(
+  input: Pick<ReserveUploadInput, 'userId'>,
+  deps: Pick<ServiceDeps, 'repository'> = {
+    repository: createUploadRepository(),
+  },
+): Promise<UploadListItem[]> {
+  const uploads = await deps.repository.listOwnedUploads({
+    userId: input.userId,
+  });
+
+  return uploads.map((upload) => ({
+    byteSize: upload.byteSize?.toString() ?? null,
+    contentType: upload.contentType,
+    createdAt: upload.createdAt,
+    filename: upload.filename,
+    objectKey: upload.objectKey,
+    sourceBlobId: upload.sourceBlobId,
+    sourceItemId: upload.sourceItemId,
+    status:
+      upload.sourceStatus === 'failed'
+        ? 'failed'
+        : upload.uploadedAt
+          ? 'uploaded'
+          : 'pending',
+    uploadedAt: upload.uploadedAt,
+  }));
+}
+
+function validateReserveInput(input: ReserveUploadInput) {
+  if (typeof input.filename !== 'string' || !input.filename.trim()) {
+    throw new UploadFlowError('filename is required.', 400);
+  }
+
+  if (typeof input.contentType !== 'string' || !input.contentType.trim()) {
+    throw new UploadFlowError('contentType is required.', 400);
+  }
+
+  if (
+    typeof input.byteSize !== 'number' ||
+    !Number.isInteger(input.byteSize) ||
+    input.byteSize < 0
+  ) {
+    throw new UploadFlowError('byteSize must be a non-negative integer.', 400);
+  }
+}
