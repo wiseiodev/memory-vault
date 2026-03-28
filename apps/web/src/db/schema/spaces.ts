@@ -31,9 +31,11 @@ export const spaces = pgTable(
     index('spaces_owner_created_idx').on(table.ownerUserId, table.createdAt),
     uniqueIndex('spaces_owner_slug_uidx')
       .on(table.ownerUserId, table.slug)
-      .where(sql`${table.slug} is not null`),
+      .where(sql`${table.slug} is not null and ${table.deletedAt} is null`),
     uniqueIndex('spaces_owner_default_uidx')
       .on(table.ownerUserId)
-      .where(sql`${table.isDefault} = true and ${table.deletedAt} is null`),
+      .where(
+        sql`${table.isDefault} = true and ${table.deletedAt} is null and ${table.archivedAt} is null`,
+      ),
   ],
 );

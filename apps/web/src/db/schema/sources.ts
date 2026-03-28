@@ -128,7 +128,7 @@ export const sourceBlobs = pgTable(
     objectKey: text('object_key').notNull(),
     bucket: text('bucket'),
     contentType: text('content_type'),
-    byteSize: bigint('byte_size', { mode: 'number' }),
+    byteSize: bigint('byte_size', { mode: 'bigint' }),
     checksumSha256: text('checksum_sha256'),
     etag: text('etag'),
     extractionStatus: blobExtractionStatus('extraction_status')

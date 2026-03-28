@@ -25,7 +25,8 @@ LAB-116 establishes the first canonical memory-domain schema for Memory Vault.
 
 ## Lifecycle Policy
 
-- User-facing domain tables carry archive and soft-delete fields.
+- User-facing domain tables, excluding citation and join tables like
+  `memory_citations`, carry archive and soft-delete fields.
 - Hard deletes should be intentional and rare.
 - Broad destructive cascades are avoided for canonical user data; operational
   rows may cascade more freely where they are purely derivative.
