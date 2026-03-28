@@ -1,6 +1,14 @@
 {
   "$schema": "https://turborepo.com/schema.json",
   "tasks": {
+    "//#env:dev": {
+      "cache": false,
+      "outputs": ["apps/web/.env.local"]
+    },
+    "//#sst:dev": {
+      "cache": false,
+      "persistent": true
+    },
     "check": {
       "dependsOn": ["^check"],
       "outputs": []

@@ -1,34 +1,10 @@
 {
+  "$schema": "https://turborepo.com/schema.json",
   "extends": ["//"],
   "tasks": {
-    "build": {
-      "env": [
-        "BETTER_AUTH_SECRET",
-        "BETTER_AUTH_URL",
-        "GOOGLE_CLIENT_ID",
-        "GOOGLE_CLIENT_SECRET",
-        "DATABASE_URL",
-        "DATABASE_URL_UNPOOLED",
-        "POSTGRES_URL",
-        "POSTGRES_URL_NON_POOLING",
-        "VERCEL_URL"
-      ],
-      "inputs": ["$TURBO_DEFAULT$", ".env.local", ".env.*"]
-    },
-    "test": {
-      "env": [
-        "BETTER_AUTH_SECRET",
-        "BETTER_AUTH_URL",
-        "GOOGLE_CLIENT_ID",
-        "GOOGLE_CLIENT_SECRET",
-        "DATABASE_URL",
-        "DATABASE_URL_UNPOOLED",
-        "POSTGRES_URL",
-        "POSTGRES_URL_NON_POOLING",
-        "VERCEL_URL"
-      ],
-      "inputs": ["$TURBO_DEFAULT$", ".env.local", ".env.*"],
-      "outputs": []
+    "dev": {
+      "dependsOn": ["//#env:dev"],
+      "with": ["//#sst:dev"]
     }
   }
 }
