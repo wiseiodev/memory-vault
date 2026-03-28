@@ -3,9 +3,15 @@ import { timestamp } from 'drizzle-orm/pg-core';
 import { generateId, type IdPrefix } from './id';
 import { ulid } from './ulid';
 
+export const softDelete = {
+  deletedAt: timestamp('deleted_at', { withTimezone: true }),
+};
+
 export const timestamps = {
-  createdAt: timestamp('created_at').defaultNow().notNull(),
-  updatedAt: timestamp('updated_at')
+  createdAt: timestamp('created_at', { withTimezone: true })
+    .defaultNow()
+    .notNull(),
+  updatedAt: timestamp('updated_at', { withTimezone: true })
     .defaultNow()
     .notNull()
     .$onUpdate(() => new Date()),
