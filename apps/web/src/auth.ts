@@ -5,7 +5,7 @@ import { oAuthProxy } from 'better-auth/plugins/oauth-proxy';
 
 import { getDb } from './db';
 import * as schema from './db/schema';
-import { buildTrustedOrigins } from './lib/server/auth/origins';
+import { buildBaseUrlOptions } from './lib/server/auth/origins';
 
 function getRequiredAuthEnv() {
   const googleClientId = process.env.GOOGLE_CLIENT_ID;
@@ -31,6 +31,9 @@ function createAuth() {
 
   return betterAuth({
     appName: 'Memory Vault',
+    baseURL: buildBaseUrlOptions({
+      baseUrl: betterAuthUrl,
+    }),
     advanced: {
       database: {
         generateId: false,
@@ -53,11 +56,12 @@ function createAuth() {
         overrideUserInfoOnSignIn: true,
       },
     },
-    trustedOrigins: buildTrustedOrigins({
-      baseUrl: betterAuthUrl,
-      vercelUrl: process.env.VERCEL_URL,
-    }),
-    plugins: [oAuthProxy(), nextCookies()],
+    plugins: [
+      oAuthProxy({
+        productionURL: betterAuthUrl,
+      }),
+      nextCookies(),
+    ],
   });
 }
 

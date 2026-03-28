@@ -1,26 +1,36 @@
 import { describe, expect, it } from 'vitest';
 
-import { buildTrustedOrigins } from './origins';
+import { buildBaseUrlOptions } from './origins';
 
-describe('buildTrustedOrigins', () => {
-  it('includes localhost and normalizes configured origins', () => {
+describe('buildBaseUrlOptions', () => {
+  it('builds allowed hosts and a fallback for production-style URLs', () => {
     expect(
-      buildTrustedOrigins({
+      buildBaseUrlOptions({
         baseUrl: 'https://memoryapp.ai/api/auth',
-        vercelUrl: 'memory-vault-git-auth-preview-wiseiodev.vercel.app',
+        nodeEnv: 'production',
       }),
-    ).toEqual([
-      'http://localhost:3000',
-      'https://memoryapp.ai',
-      'https://memory-vault-git-auth-preview-wiseiodev.vercel.app',
-    ]);
+    ).toEqual({
+      allowedHosts: [
+        'localhost:*',
+        '127.0.0.1:*',
+        '*.vercel.app',
+        'memoryapp.ai',
+      ],
+      fallback: 'https://memoryapp.ai',
+      protocol: 'https',
+    });
   });
 
-  it('ignores invalid origin input', () => {
+  it('uses localhost-friendly protocol and omits invalid fallback input', () => {
     expect(
-      buildTrustedOrigins({
+      buildBaseUrlOptions({
         baseUrl: 'not-a-url',
+        nodeEnv: 'development',
       }),
-    ).toEqual(['http://localhost:3000']);
+    ).toEqual({
+      allowedHosts: ['localhost:*', '127.0.0.1:*', '*.vercel.app'],
+      fallback: undefined,
+      protocol: 'http',
+    });
   });
 });

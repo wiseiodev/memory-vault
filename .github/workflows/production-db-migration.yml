@@ -1,0 +1,46 @@
+name: Production DB Migration
+
+on:
+  push:
+    branches:
+      - main
+
+concurrency:
+  group: production-db-migration
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  migrate-production:
+    runs-on: ubuntu-latest
+
+    env:
+      TZ: UTC
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Install pnpm
+        uses: pnpm/action-setup@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version-file: .nvmrc
+          cache: pnpm
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Pull Vercel production environment
+        env:
+          VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}
+          VERCEL_ORG_ID: ${{ secrets.VERCEL_ORG_ID }}
+          VERCEL_PROJECT_ID: ${{ secrets.VERCEL_PROJECT_ID }}
+        run: pnpm dlx vercel@latest env pull apps/web/.env.local --environment=production --yes --token=${{ secrets.VERCEL_TOKEN }}
+
+      - name: Run production migrations
+        run: pnpm --filter web db:migrate

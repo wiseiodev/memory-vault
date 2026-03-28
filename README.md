@@ -31,3 +31,10 @@ pnpm typecheck
 pnpm test
 pnpm build
 ```
+
+## Database Migrations
+
+- Drizzle migrations are owned by `apps/web`.
+- Preview migrations run in GitHub Actions on pull requests to `main`.
+- Production migrations run in GitHub Actions on pushes to `main`.
+- Both workflows pull Vercel environment variables into `apps/web/.env.local`, so `VERCEL_TOKEN`, `VERCEL_ORG_ID`, and `VERCEL_PROJECT_ID` must exist in GitHub Actions secrets.
