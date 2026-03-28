@@ -13,12 +13,16 @@
     "test": "vitest run"
   },
   "dependencies": {
+    "@aws-sdk/client-s3": "^3.1019.0",
+    "@aws-sdk/s3-request-presigner": "^3.1019.0",
+    "@vercel/oidc-aws-credentials-provider": "^3.0.7",
     "better-auth": "^1.5.6",
     "drizzle-orm": "^0.45.2",
     "next": "^16.2.1",
     "pg": "^8.20.0",
     "react": "^19.2.4",
     "react-dom": "^19.2.4",
+    "server-only": "^0.0.1",
     "ulidx": "^2.4.1"
   },
   "devDependencies": {

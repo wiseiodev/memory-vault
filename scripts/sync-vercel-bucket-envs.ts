@@ -132,7 +132,7 @@ function setVercelEnv(
   }
 
   runCommand('vercel', ['env', 'add', BUCKET_ENV_NAME, environment], {
-    input: `${bucketName}\n`,
+    input: bucketName,
     stdio: ['pipe', 'ignore', 'inherit'],
   });
 }
