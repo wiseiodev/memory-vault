@@ -469,7 +469,7 @@ describe('extractSourceDocument', () => {
     expect(deps.extractScannedPdfWithAi).toHaveBeenCalledOnce();
   });
 
-  it('falls back to AI OCR when a PDF has image-only pages mixed with text pages', async () => {
+  it('keeps deterministic PDF extraction when a PDF has mixed text and non-text pages', async () => {
     const deps = createDeps();
     deps.readObjectBytes.mockResolvedValue(new Uint8Array([1, 2, 3]));
     deps.extractPdfPages.mockResolvedValue({
@@ -482,32 +482,6 @@ describe('extractSourceDocument', () => {
       ],
       totalPages: 2,
     });
-    deps.extractScannedPdfWithAi.mockResolvedValue({
-      model: 'google/gemini-3-flash',
-      output: {
-        confidence: 0.81,
-        languageCode: 'en',
-        pages: [
-          {
-            content: 'Embedded text from page one.',
-            pageNumber: 1,
-          },
-          {
-            content: 'OCR text from scanned page two.',
-            pageNumber: 2,
-          },
-        ],
-        reason: 'Mixed PDF required OCR to preserve all pages.',
-        title: 'Hybrid report',
-      },
-      providerMetadata: {},
-      providerRoute: [
-        'google/gemini-3-flash',
-        'openai/gpt-5-mini',
-        'anthropic/claude-sonnet-4.6',
-      ],
-    });
-
     const document = await extractSourceDocument(
       createJob({
         mimeType: 'application/pdf',
@@ -520,11 +494,11 @@ describe('extractSourceDocument', () => {
     );
 
     expect(document.metadata).toMatchObject({
-      extractionStrategy: 'gateway_fallback',
-      fallbackReason: 'scanned_pdf',
+      extractionStrategy: 'deterministic',
+      extractor: 'pdfjs',
     });
-    expect(document.blocks).toHaveLength(2);
-    expect(deps.extractScannedPdfWithAi).toHaveBeenCalledOnce();
+    expect(document.blocks).toHaveLength(1);
+    expect(deps.extractScannedPdfWithAi).not.toHaveBeenCalled();
   });
 
   it('keeps deterministic PDF extraction when the missing page is blank, not image-only', async () => {
@@ -565,21 +539,12 @@ describe('extractSourceDocument', () => {
     vi.doMock('pdfjs-dist/legacy/build/pdf.worker.mjs', () => ({
       WorkerMessageHandler: { setup: vi.fn() },
     }));
+    const getOperatorList = vi.fn(async () => ({ fnArray: [] }));
     vi.doMock('pdfjs-dist/legacy/build/pdf.mjs', () => ({
-      OPS: {
-        paintImageMaskXObject: 4,
-        paintImageMaskXObjectGroup: 5,
-        paintImageMaskXObjectRepeat: 7,
-        paintImageXObject: 1,
-        paintImageXObjectRepeat: 6,
-        paintInlineImageXObject: 2,
-        paintInlineImageXObjectGroup: 3,
-        paintSolidColorImageMask: 8,
-      },
       getDocument: vi.fn(() => ({
         promise: Promise.resolve({
           getPage: vi.fn(async () => ({
-            getOperatorList: vi.fn(async () => ({ fnArray: [] })),
+            getOperatorList,
             getTextContent: vi.fn(async () => ({
               items: [{ str: 'Server-safe PDF text.' }],
             })),
@@ -602,6 +567,7 @@ describe('extractSourceDocument', () => {
         pageNumber: 1,
       },
     ]);
+    expect(getOperatorList).not.toHaveBeenCalled();
     expect(globalPdfJsWorker.pdfjsWorker?.WorkerMessageHandler).toBeDefined();
 
     vi.doUnmock('pdfjs-dist/legacy/build/pdf.mjs');

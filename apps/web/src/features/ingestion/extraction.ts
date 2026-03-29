@@ -381,17 +381,6 @@ async function defaultExtractPdfPages(input: {
     data: input.bytes,
     useWorkerFetch: false,
   }).promise;
-  const imageOperationCodes = [
-    pdfjs.OPS.paintImageXObject,
-    pdfjs.OPS.paintInlineImageXObject,
-    pdfjs.OPS.paintInlineImageXObjectGroup,
-    pdfjs.OPS.paintImageMaskXObject,
-    pdfjs.OPS.paintImageMaskXObjectGroup,
-    pdfjs.OPS.paintImageXObjectRepeat,
-    pdfjs.OPS.paintImageMaskXObjectRepeat,
-    pdfjs.OPS.paintSolidColorImageMask,
-  ].filter((code): code is number => typeof code === 'number');
-  let imageOnlyPageCount = 0;
   const pages: PdfPage[] = [];
 
   for (let pageNumber = 1; pageNumber <= document.numPages; pageNumber += 1) {
@@ -404,15 +393,6 @@ async function defaultExtractPdfPages(input: {
     );
 
     if (!content) {
-      const operatorList = await page.getOperatorList();
-      const hasImageContent = operatorList.fnArray.some((fn) =>
-        imageOperationCodes.includes(fn),
-      );
-
-      if (hasImageContent) {
-        imageOnlyPageCount += 1;
-      }
-
       continue;
     }
 
@@ -423,7 +403,7 @@ async function defaultExtractPdfPages(input: {
   }
 
   return {
-    imageOnlyPageCount,
+    imageOnlyPageCount: 0,
     pages,
     totalPages: document.numPages,
   };
@@ -600,7 +580,11 @@ async function extractFileBytesDocument(
       bytes: input.bytes.slice(),
     });
 
-    if (extraction.pages.length > 0 && extraction.imageOnlyPageCount === 0) {
+    // Keep the server-side PDF path limited to text extraction only.
+    // pdfjs image/operator inspection reaches geometry APIs that are not
+    // available in the Vercel server runtime, so OCR is reserved for PDFs
+    // with no extractable text at all.
+    if (extraction.pages.length > 0) {
       return buildExtractedDocument({
         blocks: extraction.pages.map((page) => ({
           content: page.content,
