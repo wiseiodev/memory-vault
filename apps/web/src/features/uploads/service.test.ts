@@ -4,6 +4,16 @@ vi.mock('@/db/columns/id', () => ({
   generateId: vi.fn((prefix: string) => `${prefix}_123`),
 }));
 
+const requestLogger = {
+  error: vi.fn(),
+  set: vi.fn(),
+};
+
+vi.mock('@/lib/evlog', () => ({
+  getRequestLogger: vi.fn(() => requestLogger),
+  useLogger: vi.fn(() => requestLogger),
+}));
+
 import { ORPCError } from '@orpc/server';
 import {
   completeUpload,
@@ -147,6 +157,58 @@ describe('reserveUpload', () => {
 
     expect(abandonReservation).toHaveBeenCalledWith({
       abandonedAt: new Date('2026-03-28T21:00:00.000Z'),
+      sourceBlobId: 'blob_123',
+      sourceItemId: 'src_123',
+    });
+  });
+
+  it('logs cleanup failures without hiding the original presign error', async () => {
+    const missingCredentials = new Error('missing credentials');
+    const cleanupFailure = new Error('cleanup exploded');
+
+    await expect(
+      reserveUpload(
+        {
+          byteSize: 42,
+          contentType: 'application/pdf',
+          filename: 'Quarterly Notes.pdf',
+          userId: 'user_123',
+        },
+        {
+          createPresignedUpload: vi.fn(async () => {
+            throw missingCredentials;
+          }),
+          now: () => new Date('2026-03-28T21:00:00.000Z'),
+          repository: {
+            ...createRepositoryMocks(),
+            abandonReservation: vi.fn(async () => {
+              throw cleanupFailure;
+            }),
+            createReservation: vi.fn(async () => ({
+              id: 'blob_123',
+              objectKey:
+                'spaces/spc_123/sources/src_123/blobs/blob_123/Quarterly-Notes.pdf',
+              sourceItemId: 'src_123',
+            })),
+          },
+          spaceRepository: {
+            ...createSpaceRepositoryMocks(),
+            createDefaultForUser: vi.fn(async () => ({
+              id: 'spc_123',
+              name: 'Personal',
+            })),
+            findDefaultForUser: vi.fn(async () => null),
+            findOwnedById: vi.fn(async () => null),
+          },
+          storageConfig: {
+            bucket: 'memory-vault-bucket',
+          },
+        },
+      ),
+    ).rejects.toThrow(missingCredentials);
+
+    expect(requestLogger.error).toHaveBeenCalledWith(cleanupFailure, {
+      action: 'upload.reservation.cleanup_failed',
       sourceBlobId: 'blob_123',
       sourceItemId: 'src_123',
     });

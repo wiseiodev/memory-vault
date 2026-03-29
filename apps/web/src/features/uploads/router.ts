@@ -1,8 +1,6 @@
 import { authed } from '@/rpc/procedures';
 
 import {
-  completeUploadInput,
-  completeUploadOutput,
   deleteUploadInput,
   deleteUploadOutput,
   downloadUploadInput,
@@ -12,7 +10,6 @@ import {
   reserveUploadOutput,
 } from './schemas';
 import {
-  completeUpload,
   deleteUpload,
   getDownloadUrl,
   listUploads,
@@ -25,12 +22,6 @@ export const uploadRouter = {
     .output(reserveUploadOutput)
     .handler(async ({ input, context }) => {
       return reserveUpload({ ...input, userId: context.user.id });
-    }),
-  complete: authed
-    .input(completeUploadInput)
-    .output(completeUploadOutput)
-    .handler(async ({ input, context }) => {
-      return completeUpload({ ...input, userId: context.user.id });
     }),
   delete: authed
     .input(deleteUploadInput)

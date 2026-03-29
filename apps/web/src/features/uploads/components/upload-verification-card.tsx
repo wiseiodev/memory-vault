@@ -1,72 +1,107 @@
 'use client';
 
 import { useRouter } from 'next/navigation';
-import { startTransition, useState } from 'react';
+import { startTransition, useReducer } from 'react';
 
 import { rpc } from '@/rpc/client';
 
-type CompleteResult = Awaited<ReturnType<typeof rpc.uploads.complete>>;
+type CompleteResult = Awaited<ReturnType<typeof rpc.captures.finalizeUpload>>;
+type UploadPhase =
+  | 'idle'
+  | 'reserving'
+  | 'uploading'
+  | 'completing'
+  | 'complete';
+
+type UploadVerificationState = {
+  error: string | null;
+  file: File | null;
+  isPending: boolean;
+  phase: UploadPhase;
+  result: CompleteResult | null;
+};
+
+type UploadVerificationAction =
+  | { type: 'file.selected'; file: File | null }
+  | { type: 'submit.rejected'; error: string }
+  | { type: 'submit.started' }
+  | { type: 'phase.changed'; phase: UploadPhase }
+  | { type: 'submit.succeeded'; result: CompleteResult }
+  | { type: 'submit.failed'; error: string };
+
+const initialState: UploadVerificationState = {
+  error: null,
+  file: null,
+  isPending: false,
+  phase: 'idle',
+  result: null,
+};
 
 export function UploadVerificationCard() {
   const router = useRouter();
-  const [error, setError] = useState<string | null>(null);
-  const [file, setFile] = useState<File | null>(null);
-  const [isPending, setIsPending] = useState(false);
-  const [phase, setPhase] = useState<
-    'idle' | 'reserving' | 'uploading' | 'completing' | 'complete'
-  >('idle');
-  const [result, setResult] = useState<CompleteResult | null>(null);
+  const [state, dispatch] = useReducer(uploadVerificationReducer, initialState);
 
   function handleSubmit() {
-    if (!file) {
-      setError('Choose a file first.');
+    if (!state.file) {
+      dispatch({
+        type: 'submit.rejected',
+        error: 'Choose a file first.',
+      });
       return;
     }
 
-    setError(null);
-    setResult(null);
+    const selectedFile = state.file;
 
-    startTransition(async () => {
-      setIsPending(true);
+    startTransition(() => {
+      dispatch({ type: 'submit.started' });
 
-      try {
-        setPhase('reserving');
-        const reservedUpload = await rpc.uploads.reserve({
-          byteSize: file.size,
-          contentType: file.type || 'application/octet-stream',
-          filename: file.name,
+      void rpc.uploads
+        .reserve({
+          byteSize: selectedFile.size,
+          contentType: selectedFile.type || 'application/octet-stream',
+          filename: selectedFile.name,
+        })
+        .then(async (reservedUpload) => {
+          dispatch({
+            type: 'phase.changed',
+            phase: 'uploading',
+          });
+          const uploadResponse = await fetch(reservedUpload.uploadUrl, {
+            body: selectedFile,
+            headers: reservedUpload.uploadHeaders,
+            method: reservedUpload.uploadMethod,
+          });
+
+          if (!uploadResponse.ok) {
+            throw new Error('Direct upload to S3 failed.');
+          }
+
+          dispatch({
+            type: 'phase.changed',
+            phase: 'completing',
+          });
+          return rpc.captures.finalizeUpload({
+            sourceBlobId: reservedUpload.sourceBlobId,
+            sourceItemId: reservedUpload.sourceItemId,
+          });
+        })
+        .then((completedUpload) => {
+          dispatch({
+            type: 'submit.succeeded',
+            result: completedUpload,
+          });
+          router.refresh();
+        })
+        .catch((uploadError) => {
+          console.error('Upload verification failed', uploadError);
+          dispatch({
+            type: 'submit.failed',
+            error:
+              uploadError instanceof Error
+                ? uploadError.message
+                : 'Upload failed unexpectedly.',
+          });
         });
-
-        setPhase('uploading');
-        const uploadResponse = await fetch(reservedUpload.uploadUrl, {
-          body: file,
-          headers: reservedUpload.uploadHeaders,
-          method: reservedUpload.uploadMethod,
-        });
-
-        if (!uploadResponse.ok) {
-          throw new Error('Direct upload to S3 failed.');
-        }
-
-        setPhase('completing');
-        const completedUpload = await rpc.uploads.complete({
-          sourceBlobId: reservedUpload.sourceBlobId,
-          sourceItemId: reservedUpload.sourceItemId,
-        });
-        setResult(completedUpload);
-        setPhase('complete');
-        router.refresh();
-      } catch (uploadError) {
-        console.error('Upload verification failed', uploadError);
-        setError(
-          uploadError instanceof Error
-            ? uploadError.message
-            : 'Upload failed unexpectedly.',
-        );
-        setPhase('idle');
-      } finally {
-        setIsPending(false);
-      }
     });
   }
 
@@ -86,78 +121,84 @@ export function UploadVerificationCard() {
         <input
           type='file'
           onChange={(event) => {
-            setFile(event.target.files?.[0] ?? null);
-            setError(null);
+            dispatch({
+              type: 'file.selected',
+              file: event.target.files?.[0] ?? null,
+            });
           }}
           className='block w-full rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm text-slate-700'
         />
 
         <button
           type='button'
-          disabled={!file || isPending}
+          disabled={!state.file || state.isPending}
           onClick={handleSubmit}
           className='inline-flex items-center justify-center rounded-full bg-slate-950 px-5 py-3 text-sm font-semibold text-white transition hover:bg-slate-800 disabled:cursor-not-allowed disabled:opacity-60'
         >
-          {labelForPhase(phase, isPending)}
+          {labelForPhase(state.phase, state.isPending)}
         </button>
 
-        {file ? (
-          <p className='text-sm text-slate-600'>
-            Selected:{' '}
-            <span className='font-medium text-slate-900'>{file.name}</span> (
-            {file.type || 'unknown type'}, {file.size} bytes)
-          </p>
+        <SelectedFileSummary file={state.file} />
+
+        {state.error ? (
+          <p className='text-sm text-red-600'>{state.error}</p>
         ) : null}
 
-        {error ? <p className='text-sm text-red-600'>{error}</p> : null}
-
-        {result ? (
-          <dl className='grid gap-3 rounded-2xl border border-emerald-200/70 bg-emerald-50/80 p-4 text-sm text-slate-700'>
-            <div>
-              <dt className='text-xs font-semibold uppercase tracking-[0.16em] text-slate-500'>
-                Source item
-              </dt>
-              <dd className='mt-1 break-all text-slate-900'>
-                {result.sourceItemId}
-              </dd>
-            </div>
-            <div>
-              <dt className='text-xs font-semibold uppercase tracking-[0.16em] text-slate-500'>
-                Source blob
-              </dt>
-              <dd className='mt-1 break-all text-slate-900'>
-                {result.sourceBlobId}
-              </dd>
-            </div>
-            <div>
-              <dt className='text-xs font-semibold uppercase tracking-[0.16em] text-slate-500'>
-                Object key
-              </dt>
-              <dd className='mt-1 break-all text-slate-900'>
-                {result.objectKey}
-              </dd>
-            </div>
-            <div>
-              <dt className='text-xs font-semibold uppercase tracking-[0.16em] text-slate-500'>
-                Uploaded at
-              </dt>
-              <dd className='mt-1 text-slate-900'>
-                {result.uploadedAt
-                  ? new Date(result.uploadedAt).toLocaleString()
-                  : 'Pending'}
-              </dd>
-            </div>
-          </dl>
-        ) : null}
+        <UploadResultDetails result={state.result} />
       </div>
     </article>
   );
 }
 
-function labelForPhase(
-  phase: 'idle' | 'reserving' | 'uploading' | 'completing' | 'complete',
-  isPending: boolean,
-) {
+function uploadVerificationReducer(
+  state: UploadVerificationState,
+  action: UploadVerificationAction,
+): UploadVerificationState {
+  switch (action.type) {
+    case 'file.selected':
+      return {
+        ...state,
+        error: null,
+        file: action.file,
+      };
+    case 'submit.rejected':
+      return {
+        ...state,
+        error: action.error,
+      };
+    case 'submit.started':
+      return {
+        ...state,
+        error: null,
+        isPending: true,
+        phase: 'reserving',
+        result: null,
+      };
+    case 'phase.changed':
+      return {
+        ...state,
+        phase: action.phase,
+      };
+    case 'submit.succeeded':
+      return {
+        ...state,
+        isPending: false,
+        phase: 'complete',
+        result: action.result,
+      };
+    case 'submit.failed':
+      return {
+        ...state,
+        error: action.error,
+        isPending: false,
+        phase: 'idle',
+      };
+    default:
+      return state;
+  }
+}
+
+function labelForPhase(phase: UploadPhase, isPending: boolean) {
   if (!isPending) {
     return 'Upload file';
   }
@@ -175,4 +216,54 @@ function labelForPhase(
   }
 
   return 'Working...';
+}
+
+function SelectedFileSummary({ file }: { file: File | null }) {
+  if (!file) {
+    return null;
+  }
+
+  return (
+    <p className='text-sm text-slate-600'>
+      Selected: <span className='font-medium text-slate-900'>{file.name}</span>{' '}
+      ({file.type || 'unknown type'}, {file.size} bytes)
+    </p>
+  );
+}
+
+function UploadResultDetails({ result }: { result: CompleteResult | null }) {
+  if (!result) {
+    return null;
+  }
+
+  return (
+    <dl className='grid gap-3 rounded-2xl border border-emerald-200/70 bg-emerald-50/80 p-4 text-sm text-slate-700'>
+      <div>
+        <dt className='text-xs font-semibold uppercase tracking-[0.16em] text-slate-500'>
+          Source item
+        </dt>
+        <dd className='mt-1 break-all text-slate-900'>{result.sourceItemId}</dd>
+      </div>
+      <div>
+        <dt className='text-xs font-semibold uppercase tracking-[0.16em] text-slate-500'>
+          Source blob
+        </dt>
+        <dd className='mt-1 break-all text-slate-900'>{result.sourceBlobId}</dd>
+      </div>
+      <div>
+        <dt className='text-xs font-semibold uppercase tracking-[0.16em] text-slate-500'>
+          Kind
+        </dt>
+        <dd className='mt-1 text-slate-900'>{result.kind}</dd>
+      </div>
+      <div>
+        <dt className='text-xs font-semibold uppercase tracking-[0.16em] text-slate-500'>
+          Uploaded at
+        </dt>
+        <dd className='mt-1 text-slate-900'>
+          {new Date(result.capturedAt).toLocaleString()}
+        </dd>
+      </div>
+    </dl>
+  );
 }

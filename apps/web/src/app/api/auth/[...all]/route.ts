@@ -1,13 +1,14 @@
 import { toNextJsHandler } from 'better-auth/next-js';
 
 import { getAuth } from '@/auth';
+import { withEvlog } from '@/lib/evlog';
 
 export const runtime = 'nodejs';
 
-export async function GET(request: Request) {
+export const GET = withEvlog(async (request: Request) => {
   return toNextJsHandler(getAuth()).GET(request);
-}
+});
 
-export async function POST(request: Request) {
+export const POST = withEvlog(async (request: Request) => {
   return toNextJsHandler(getAuth()).POST(request);
-}
+});

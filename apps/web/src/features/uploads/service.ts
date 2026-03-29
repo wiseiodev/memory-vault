@@ -3,6 +3,7 @@ import 'server-only';
 import { ORPCError } from '@orpc/server';
 import { generateId } from '@/db/columns/id';
 import { createSpaceRepository } from '@/features/spaces';
+import { getRequestLogger } from '@/lib/evlog';
 import { buildSourceBlobObjectKey } from './object-key';
 import { createUploadRepository, type UploadRepository } from './repository';
 import {
@@ -129,11 +130,16 @@ export async function reserveUpload(
         sourceItemId,
       });
     } catch (cleanupError) {
-      console.error('Failed to abandon upload reservation after error', {
-        cleanupError,
-        sourceBlobId: blobId,
-        sourceItemId,
-      });
+      getRequestLogger().error(
+        cleanupError instanceof Error
+          ? cleanupError
+          : new Error('Unknown upload cleanup failure'),
+        {
+          action: 'upload.reservation.cleanup_failed',
+          sourceBlobId: blobId,
+          sourceItemId,
+        },
+      );
     }
     throw error;
   }
