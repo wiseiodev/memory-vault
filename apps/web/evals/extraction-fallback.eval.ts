@@ -59,6 +59,10 @@ const preservesAnchorPhrases = createScorer<
 >({
   name: 'anchor-phrases',
   scorer: ({ input, output }) => {
+    if (input.expectedPhrases.length === 0) {
+      return 1;
+    }
+
     const haystack = output.pages.map((page) => page.content).join('\n');
     const matchedPhrases = input.expectedPhrases.filter((phrase) =>
       haystack.includes(phrase),

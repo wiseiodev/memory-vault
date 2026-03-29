@@ -1,8 +1,12 @@
 import 'server-only';
 
-import { Readability } from '@mozilla/readability';
-import { JSDOM } from 'jsdom';
-import { readObjectBytes } from '@/features/uploads/storage';
+import { lookup } from 'node:dns/promises';
+import { isIP } from 'node:net';
+
+import {
+  readObjectBytes,
+  StorageObjectTooLargeError,
+} from '@/features/uploads/storage';
 import {
   extractHardWebPageWithAi,
   extractImageWithAi,
@@ -18,6 +22,7 @@ import type {
 type IngestionJobForExtraction = {
   canonicalUri: string | null;
   mimeType: string | null;
+  sourceBlobByteSize: bigint | null;
   sourceBlobContentType: string | null;
   sourceBlobId: string | null;
   sourceBlobObjectKey: string | null;
@@ -34,11 +39,13 @@ type PdfPage = {
 };
 
 type PdfTextExtraction = {
+  imageOnlyPageCount: number;
   pages: PdfPage[];
   totalPages: number;
 };
 
 type ExtractSourceDeps = {
+  assertSafeWebUrl: (url: string) => Promise<string>;
   extractHardWebPageWithAi: typeof extractHardWebPageWithAi;
   extractImageWithAi: typeof extractImageWithAi;
   extractPdfPages: (input: { bytes: Uint8Array }) => Promise<PdfTextExtraction>;
@@ -46,6 +53,10 @@ type ExtractSourceDeps = {
   fetch: typeof fetch;
   readObjectBytes: typeof readObjectBytes;
 };
+
+const MAX_EXTRACTION_BLOB_BYTES = 25 * 1024 * 1024;
+const MAX_WEB_REDIRECTS = 5;
+const MIN_READABILITY_TEXT_LENGTH = 200;
 
 function normalizeText(content: string) {
   return content
@@ -206,6 +217,142 @@ function pickTitle(...values: Array<string | null | undefined>) {
   return null;
 }
 
+function ipv4ToInteger(address: string) {
+  return address
+    .split('.')
+    .map((part) => Number(part))
+    .reduce((value, octet) => (value << 8) + octet, 0);
+}
+
+function isPrivateIpv4(address: string) {
+  const value = ipv4ToInteger(address);
+  const ranges: Array<[number, number]> = [
+    [ipv4ToInteger('0.0.0.0'), ipv4ToInteger('0.255.255.255')],
+    [ipv4ToInteger('10.0.0.0'), ipv4ToInteger('10.255.255.255')],
+    [ipv4ToInteger('100.64.0.0'), ipv4ToInteger('100.127.255.255')],
+    [ipv4ToInteger('127.0.0.0'), ipv4ToInteger('127.255.255.255')],
+    [ipv4ToInteger('169.254.0.0'), ipv4ToInteger('169.254.255.255')],
+    [ipv4ToInteger('172.16.0.0'), ipv4ToInteger('172.31.255.255')],
+    [ipv4ToInteger('192.168.0.0'), ipv4ToInteger('192.168.255.255')],
+    [ipv4ToInteger('198.18.0.0'), ipv4ToInteger('198.19.255.255')],
+    [ipv4ToInteger('224.0.0.0'), ipv4ToInteger('255.255.255.255')],
+  ];
+
+  return ranges.some(([start, end]) => value >= start && value <= end);
+}
+
+function isPrivateIpv6(address: string) {
+  const normalized = address.toLowerCase();
+
+  return (
+    normalized === '::' ||
+    normalized === '::1' ||
+    normalized.startsWith('fc') ||
+    normalized.startsWith('fd') ||
+    normalized.startsWith('fe80:') ||
+    normalized.startsWith('::ffff:127.') ||
+    normalized.startsWith('::ffff:10.') ||
+    normalized.startsWith('::ffff:192.168.') ||
+    normalized.startsWith('::ffff:169.254.')
+  );
+}
+
+function isPrivateIpAddress(address: string) {
+  const version = isIP(address);
+
+  if (version === 4) {
+    return isPrivateIpv4(address);
+  }
+
+  if (version === 6) {
+    return isPrivateIpv6(address);
+  }
+
+  return false;
+}
+
+async function defaultAssertSafeWebUrl(url: string) {
+  let parsedUrl: URL;
+
+  try {
+    parsedUrl = new URL(url);
+  } catch {
+    throw new IngestionPipelineError(
+      'UNSAFE_SOURCE_URI',
+      'Web extraction requires a valid absolute URL.',
+      { url },
+    );
+  }
+
+  if (parsedUrl.protocol !== 'http:' && parsedUrl.protocol !== 'https:') {
+    throw new IngestionPipelineError(
+      'UNSAFE_SOURCE_URI',
+      'Web extraction only supports http and https URLs.',
+      {
+        protocol: parsedUrl.protocol,
+        url,
+      },
+    );
+  }
+
+  const hostname = parsedUrl.hostname.toLowerCase();
+
+  if (hostname === 'localhost' || hostname.endsWith('.localhost')) {
+    throw new IngestionPipelineError(
+      'UNSAFE_SOURCE_URI',
+      'Localhost targets are not allowed for web extraction.',
+      { hostname, url },
+    );
+  }
+
+  if (isPrivateIpAddress(hostname)) {
+    throw new IngestionPipelineError(
+      'UNSAFE_SOURCE_URI',
+      'Private network targets are not allowed for web extraction.',
+      { hostname, url },
+    );
+  }
+
+  try {
+    const addresses = await lookup(hostname, {
+      all: true,
+      verbatim: true,
+    });
+
+    if (addresses.some((address) => isPrivateIpAddress(address.address))) {
+      throw new IngestionPipelineError(
+        'UNSAFE_SOURCE_URI',
+        'Web extraction cannot follow domains that resolve to private network addresses.',
+        { hostname, url },
+      );
+    }
+  } catch (error) {
+    if (error instanceof IngestionPipelineError) {
+      throw error;
+    }
+  }
+
+  parsedUrl.username = '';
+  parsedUrl.password = '';
+
+  return parsedUrl.toString();
+}
+
+async function extractReadableHtml(html: string, url: string) {
+  const [{ Readability }, { JSDOM }] = await Promise.all([
+    import('@mozilla/readability'),
+    import('jsdom'),
+  ]);
+  const dom = new JSDOM(html, { url });
+  const readability = new Readability(dom.window.document);
+  const article = readability.parse();
+
+  return {
+    article,
+    documentTitle: dom.window.document.title,
+  };
+}
+
 async function defaultExtractPdfPages(input: {
   bytes: Uint8Array;
 }): Promise<PdfTextExtraction> {
@@ -214,6 +361,17 @@ async function defaultExtractPdfPages(input: {
     data: input.bytes,
     useWorkerFetch: false,
   }).promise;
+  const imageOperationCodes = [
+    pdfjs.OPS.paintImageXObject,
+    pdfjs.OPS.paintInlineImageXObject,
+    pdfjs.OPS.paintInlineImageXObjectGroup,
+    pdfjs.OPS.paintImageMaskXObject,
+    pdfjs.OPS.paintImageMaskXObjectGroup,
+    pdfjs.OPS.paintImageXObjectRepeat,
+    pdfjs.OPS.paintImageMaskXObjectRepeat,
+    pdfjs.OPS.paintSolidColorImageMask,
+  ].filter((code): code is number => typeof code === 'number');
+  let imageOnlyPageCount = 0;
   const pages: PdfPage[] = [];
 
   for (let pageNumber = 1; pageNumber <= document.numPages; pageNumber += 1) {
@@ -226,6 +384,15 @@ async function defaultExtractPdfPages(input: {
     );
 
     if (!content) {
+      const operatorList = await page.getOperatorList();
+      const hasImageContent = operatorList.fnArray.some((fn) =>
+        imageOperationCodes.includes(fn),
+      );
+
+      if (hasImageContent) {
+        imageOnlyPageCount += 1;
+      }
+
       continue;
     }
 
@@ -236,6 +403,7 @@ async function defaultExtractPdfPages(input: {
   }
 
   return {
+    imageOnlyPageCount,
     pages,
     totalPages: document.numPages,
   };
@@ -390,10 +558,7 @@ async function extractFileBytesDocument(
       bytes: input.bytes,
     });
 
-    if (
-      extraction.pages.length > 0 &&
-      extraction.pages.length === extraction.totalPages
-    ) {
+    if (extraction.pages.length > 0 && extraction.imageOnlyPageCount === 0) {
       return buildExtractedDocument({
         blocks: extraction.pages.map((page) => ({
           content: page.content,
@@ -411,6 +576,7 @@ async function extractFileBytesDocument(
           extractionStrategy: 'deterministic',
           extractor: 'pdfjs',
           fallbackUsed: false,
+          imageOnlyPageCount: extraction.imageOnlyPageCount,
         },
         mimeType: inferredMimeType,
         sourceBlobId: input.sourceBlobId,
@@ -474,9 +640,44 @@ async function extractFileDocument(
     );
   }
 
-  const bytes = await deps.readObjectBytes({
-    objectKey: job.sourceBlobObjectKey,
-  });
+  if (
+    typeof job.sourceBlobByteSize === 'bigint' &&
+    job.sourceBlobByteSize > BigInt(MAX_EXTRACTION_BLOB_BYTES)
+  ) {
+    throw new IngestionPipelineError(
+      'SOURCE_BLOB_TOO_LARGE',
+      'File is too large for the current in-memory extraction pipeline.',
+      {
+        byteSize: job.sourceBlobByteSize.toString(),
+        maxBytes: MAX_EXTRACTION_BLOB_BYTES,
+        sourceBlobId: job.sourceBlobId,
+      },
+    );
+  }
+
+  let bytes: Uint8Array;
+
+  try {
+    bytes = await deps.readObjectBytes({
+      maxBytes: MAX_EXTRACTION_BLOB_BYTES,
+      objectKey: job.sourceBlobObjectKey,
+    });
+  } catch (error) {
+    if (error instanceof StorageObjectTooLargeError) {
+      throw new IngestionPipelineError(
+        'SOURCE_BLOB_TOO_LARGE',
+        'File is too large for the current in-memory extraction pipeline.',
+        {
+          byteSize: error.byteSize.toString(),
+          maxBytes: error.maxBytes,
+          objectKey: error.objectKey,
+          sourceBlobId: job.sourceBlobId,
+        },
+      );
+    }
+
+    throw error;
+  }
 
   return extractFileBytesDocument(
     {
@@ -490,6 +691,74 @@ async function extractFileDocument(
       title: job.sourceTitle,
     },
     deps,
+  );
+}
+
+function isRedirectStatus(status: number) {
+  return [301, 302, 303, 307, 308].includes(status);
+}
+
+async function fetchWebPageResponse(
+  submittedUrl: string,
+  deps: ExtractSourceDeps,
+) {
+  let currentUrl = await deps.assertSafeWebUrl(submittedUrl);
+
+  for (
+    let redirectCount = 0;
+    redirectCount <= MAX_WEB_REDIRECTS;
+    redirectCount += 1
+  ) {
+    const response = await deps.fetch(currentUrl, {
+      headers: {
+        Accept:
+          'text/html,application/xhtml+xml,text/plain;q=0.8,application/pdf;q=0.7,*/*;q=0.5',
+        'User-Agent':
+          'MemoryVaultBot/1.0 (+https://memory-vault.local/extraction)',
+      },
+      redirect: 'manual',
+      signal: AbortSignal.timeout(15_000),
+    });
+
+    if (!isRedirectStatus(response.status)) {
+      return {
+        finalUrl: currentUrl,
+        response,
+      };
+    }
+
+    const location = response.headers.get('location');
+
+    if (!location) {
+      return {
+        finalUrl: currentUrl,
+        response,
+      };
+    }
+
+    if (redirectCount === MAX_WEB_REDIRECTS) {
+      throw new IngestionPipelineError(
+        'WEB_FETCH_FAILED',
+        'Web extraction exceeded the maximum redirect count.',
+        {
+          maxRedirects: MAX_WEB_REDIRECTS,
+          url: currentUrl,
+        },
+      );
+    }
+
+    currentUrl = await deps.assertSafeWebUrl(
+      new URL(location, currentUrl).toString(),
+    );
+  }
+
+  throw new IngestionPipelineError(
+    'WEB_FETCH_FAILED',
+    'Web extraction exhausted the redirect handling loop unexpectedly.',
+    {
+      maxRedirects: MAX_WEB_REDIRECTS,
+      url: submittedUrl,
+    },
   );
 }
 
@@ -510,22 +779,24 @@ async function extractWebPageDocument(
     );
   }
 
+  const safeSubmittedUrl = await deps.assertSafeWebUrl(submittedUrl);
   let response: Response;
+  let finalUrl = safeSubmittedUrl;
 
   try {
-    response = await deps.fetch(submittedUrl, {
-      headers: {
-        Accept:
-          'text/html,application/xhtml+xml,text/plain;q=0.8,application/pdf;q=0.7,*/*;q=0.5',
-        'User-Agent':
-          'MemoryVaultBot/1.0 (+https://memory-vault.local/extraction)',
-      },
-      redirect: 'follow',
-      signal: AbortSignal.timeout(15_000),
-    });
-  } catch {
+    const resolvedResponse = await fetchWebPageResponse(safeSubmittedUrl, deps);
+    response = resolvedResponse.response;
+    finalUrl = resolvedResponse.finalUrl;
+  } catch (error) {
+    if (
+      error instanceof IngestionPipelineError &&
+      error.code === 'UNSAFE_SOURCE_URI'
+    ) {
+      throw error;
+    }
+
     return fallbackWebPageToAi({
-      canonicalUri: submittedUrl,
+      canonicalUri: safeSubmittedUrl,
       deps,
       fallbackReason: 'fetch_failed',
       title: job.sourceTitle,
@@ -534,14 +805,13 @@ async function extractWebPageDocument(
 
   if (!response.ok) {
     return fallbackWebPageToAi({
-      canonicalUri: response.url || submittedUrl,
+      canonicalUri: finalUrl,
       deps,
       fallbackReason: 'fetch_failed',
       title: job.sourceTitle,
     });
   }
 
-  const finalUrl = response.url || submittedUrl;
   const mimeType =
     response.headers.get('content-type')?.split(';')[0]?.trim() ?? null;
   const bytes = new Uint8Array(await response.arrayBuffer());
@@ -561,14 +831,13 @@ async function extractWebPageDocument(
 
   const html = new TextDecoder().decode(bytes);
   try {
-    const dom = new JSDOM(html, {
-      url: finalUrl,
-    });
-    const readability = new Readability(dom.window.document);
-    const article = readability.parse();
+    const { article, documentTitle } = await extractReadableHtml(
+      html,
+      finalUrl,
+    );
     const extractedText = normalizeText(article?.textContent ?? '');
 
-    if (extractedText.length >= 200) {
+    if (extractedText.length >= MIN_READABILITY_TEXT_LENGTH) {
       return textToDocument({
         canonicalUri: finalUrl,
         content: extractedText,
@@ -579,11 +848,7 @@ async function extractWebPageDocument(
         },
         mimeType,
         sourceBlobId: null,
-        title: pickTitle(
-          article?.title,
-          dom.window.document.title,
-          job.sourceTitle,
-        ),
+        title: pickTitle(article?.title, documentTitle, job.sourceTitle),
       });
     }
 
@@ -593,11 +858,7 @@ async function extractWebPageDocument(
       fallbackReason:
         extractedText.length > 0 ? 'low_text_yield' : 'readability_failed',
       html: html.slice(0, 120_000),
-      title: pickTitle(
-        article?.title,
-        dom.window.document.title,
-        job.sourceTitle,
-      ),
+      title: pickTitle(article?.title, documentTitle, job.sourceTitle),
     });
   } catch {
     return fallbackWebPageToAi({
@@ -613,6 +874,7 @@ async function extractWebPageDocument(
 export async function extractSourceDocument(
   job: IngestionJobForExtraction,
   deps: ExtractSourceDeps = {
+    assertSafeWebUrl: defaultAssertSafeWebUrl,
     extractHardWebPageWithAi,
     extractImageWithAi,
     extractPdfPages: defaultExtractPdfPages,

@@ -35,12 +35,11 @@ function readRequiredAiGatewayApiKey() {
 function baseProviderOptions(input: {
   fallbackModels: [string, ...string[]];
   metadata: Record<string, string>;
-  primaryModel: string;
 }) {
   return {
     gateway: {
       metadata: input.metadata,
-      models: [input.primaryModel, ...input.fallbackModels],
+      models: input.fallbackModels,
       order: ['google', 'openai', 'anthropic'],
     },
   };
@@ -80,7 +79,6 @@ export async function extractHardWebPageWithAi(input: {
         capability: 'web-extraction',
         sourceKind: 'web_page',
       },
-      primaryModel,
     }),
     temperature: 0,
     messages: [
@@ -149,7 +147,6 @@ export async function extractImageWithAi(input: {
         capability: 'image-ocr',
         sourceKind: 'file',
       },
-      primaryModel,
     }),
     temperature: 0,
     messages: [
@@ -211,7 +208,6 @@ export async function extractScannedPdfWithAi(input: {
         capability: 'pdf-ocr',
         sourceKind: 'file',
       },
-      primaryModel,
     }),
     temperature: 0,
     messages: [

@@ -54,6 +54,7 @@ export type IngestionRepository = {
     sourceBlobId: string | null;
     sourceBlobContentType: string | null;
     sourceBlobObjectKey: string | null;
+    sourceBlobByteSize: bigint | null;
     sourceItemId: string | null;
     sourceKind: 'file' | 'note' | 'web_page' | null;
     sourceMetadata: Record<string, unknown>;
@@ -259,6 +260,7 @@ export function createIngestionRepository(
           sourceBlobContentType: sourceBlobs.contentType,
           sourceBlobId: sourceBlobs.id,
           sourceBlobObjectKey: sourceBlobs.objectKey,
+          sourceBlobByteSize: sourceBlobs.byteSize,
           sourceItemId: ingestionJobs.sourceItemId,
           sourceKind: sourceItems.kind,
           sourceMetadata: sourceItems.metadata,
@@ -293,6 +295,7 @@ export function createIngestionRepository(
         sourceBlobContentType: job.sourceBlobContentType,
         sourceBlobId: job.sourceBlobId ?? null,
         sourceBlobObjectKey: job.sourceBlobObjectKey ?? null,
+        sourceBlobByteSize: job.sourceBlobByteSize ?? null,
         sourceItemId: job.sourceItemId ?? null,
         sourceKind:
           job.sourceKind === 'file' ||

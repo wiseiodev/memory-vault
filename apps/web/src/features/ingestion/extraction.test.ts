@@ -1,4 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
+import { IngestionPipelineError } from './errors';
 import {
   type ExtractSourceDocumentInput,
   extractSourceDocument,
@@ -10,6 +11,7 @@ function createJob(
   return {
     canonicalUri: null,
     mimeType: null,
+    sourceBlobByteSize: null,
     sourceBlobContentType: null,
     sourceBlobId: null,
     sourceBlobObjectKey: null,
@@ -22,6 +24,7 @@ function createJob(
 
 function createDeps() {
   return {
+    assertSafeWebUrl: vi.fn(async (url: string) => url),
     extractHardWebPageWithAi: vi.fn(),
     extractImageWithAi: vi.fn(),
     extractPdfPages: vi.fn(),
@@ -305,6 +308,7 @@ describe('extractSourceDocument', () => {
     const deps = createDeps();
     deps.readObjectBytes.mockResolvedValue(new Uint8Array([1, 2, 3]));
     deps.extractPdfPages.mockResolvedValue({
+      imageOnlyPageCount: 0,
       pages: [
         {
           content: 'Page one paragraph.',
@@ -343,6 +347,7 @@ describe('extractSourceDocument', () => {
     const deps = createDeps();
     deps.readObjectBytes.mockResolvedValue(new Uint8Array([1, 2, 3]));
     deps.extractPdfPages.mockResolvedValue({
+      imageOnlyPageCount: 1,
       pages: [],
       totalPages: 1,
     });
@@ -388,10 +393,11 @@ describe('extractSourceDocument', () => {
     });
   });
 
-  it('falls back to AI OCR when a PDF has scanned pages mixed with text pages', async () => {
+  it('falls back to AI OCR when a PDF has image-only pages mixed with text pages', async () => {
     const deps = createDeps();
     deps.readObjectBytes.mockResolvedValue(new Uint8Array([1, 2, 3]));
     deps.extractPdfPages.mockResolvedValue({
+      imageOnlyPageCount: 1,
       pages: [
         {
           content: 'Embedded text from page one.',
@@ -443,6 +449,39 @@ describe('extractSourceDocument', () => {
     });
     expect(document.blocks).toHaveLength(2);
     expect(deps.extractScannedPdfWithAi).toHaveBeenCalledOnce();
+  });
+
+  it('keeps deterministic PDF extraction when the missing page is blank, not image-only', async () => {
+    const deps = createDeps();
+    deps.readObjectBytes.mockResolvedValue(new Uint8Array([1, 2, 3]));
+    deps.extractPdfPages.mockResolvedValue({
+      imageOnlyPageCount: 0,
+      pages: [
+        {
+          content: 'Embedded text from page one.',
+          pageNumber: 1,
+        },
+      ],
+      totalPages: 2,
+    });
+
+    const document = await extractSourceDocument(
+      createJob({
+        mimeType: 'application/pdf',
+        sourceBlobId: 'blob_123',
+        sourceBlobObjectKey: 'spaces/spc_123/blank-page.pdf',
+        sourceKind: 'file',
+        sourceTitle: 'blank-page.pdf',
+      }),
+      deps,
+    );
+
+    expect(document.metadata).toMatchObject({
+      extractionStrategy: 'deterministic',
+      extractor: 'pdfjs',
+      imageOnlyPageCount: 0,
+    });
+    expect(deps.extractScannedPdfWithAi).not.toHaveBeenCalled();
   });
 
   it('uses AI OCR for images', async () => {
@@ -525,5 +564,86 @@ describe('extractSourceDocument', () => {
     ).rejects.toMatchObject({
       code: 'EMPTY_EXTRACTED_CONTENT',
     });
+  });
+
+  it('rejects oversized blob extraction before reading the full object', async () => {
+    const deps = createDeps();
+
+    await expect(
+      extractSourceDocument(
+        createJob({
+          mimeType: 'application/pdf',
+          sourceBlobByteSize: BigInt(26 * 1024 * 1024),
+          sourceBlobId: 'blob_oversized',
+          sourceBlobObjectKey: 'spaces/spc_123/large.pdf',
+          sourceKind: 'file',
+          sourceTitle: 'large.pdf',
+        }),
+        deps,
+      ),
+    ).rejects.toMatchObject({
+      code: 'SOURCE_BLOB_TOO_LARGE',
+    });
+
+    expect(deps.readObjectBytes).not.toHaveBeenCalled();
+  });
+
+  it('rejects localhost web targets before fetching', async () => {
+    const deps = createDeps();
+    deps.assertSafeWebUrl.mockRejectedValueOnce(
+      new IngestionPipelineError(
+        'UNSAFE_SOURCE_URI',
+        'Localhost targets are not allowed.',
+      ),
+    );
+
+    await expect(
+      extractSourceDocument(
+        createJob({
+          canonicalUri: 'http://127.0.0.1/private',
+          sourceKind: 'web_page',
+        }),
+        deps,
+      ),
+    ).rejects.toMatchObject({
+      code: 'UNSAFE_SOURCE_URI',
+    });
+
+    expect(deps.fetch).not.toHaveBeenCalled();
+    expect(deps.extractHardWebPageWithAi).not.toHaveBeenCalled();
+  });
+
+  it('rejects unsafe redirect destinations before following them', async () => {
+    const deps = createDeps();
+    deps.assertSafeWebUrl
+      .mockResolvedValueOnce('https://example.com/start')
+      .mockRejectedValueOnce(
+        new IngestionPipelineError(
+          'UNSAFE_SOURCE_URI',
+          'Redirect target was not allowed.',
+        ),
+      );
+    deps.fetch.mockResolvedValue(
+      new Response(null, {
+        headers: {
+          location: 'http://127.0.0.1/private',
+        },
+        status: 302,
+      }),
+    );
+
+    await expect(
+      extractSourceDocument(
+        createJob({
+          canonicalUri: 'https://example.com/start',
+          sourceKind: 'web_page',
+        }),
+        deps,
+      ),
+    ).rejects.toMatchObject({
+      code: 'UNSAFE_SOURCE_URI',
+    });
+
+    expect(deps.extractHardWebPageWithAi).not.toHaveBeenCalled();
   });
 });

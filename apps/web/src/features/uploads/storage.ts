@@ -24,6 +24,25 @@ type HeadedObject = {
   etag: string | null;
 };
 
+export class StorageObjectTooLargeError extends Error {
+  byteSize: bigint;
+  maxBytes: number;
+  objectKey: string;
+
+  constructor(input: {
+    byteSize: bigint;
+    maxBytes: number;
+    objectKey: string;
+  }) {
+    super(
+      `Object ${input.objectKey} is ${input.byteSize.toString()} bytes, which exceeds the ${input.maxBytes.toString()} byte extraction limit.`,
+    );
+    this.byteSize = input.byteSize;
+    this.maxBytes = input.maxBytes;
+    this.objectKey = input.objectKey;
+  }
+}
+
 let storageConfig: StorageConfig | undefined;
 let s3Client: S3Client | undefined;
 
@@ -110,7 +129,10 @@ export async function createPresignedDownload(input: { objectKey: string }) {
   });
 }
 
-export async function readObjectBytes(input: { objectKey: string }) {
+export async function readObjectBytes(input: {
+  maxBytes?: number;
+  objectKey: string;
+}) {
   const config = getStorageConfig();
   const response = await getS3Client().send(
     new GetObjectCommand({
@@ -123,6 +145,18 @@ export async function readObjectBytes(input: { objectKey: string }) {
 
   if (!body) {
     throw new Error(`Object body was empty for key ${input.objectKey}.`);
+  }
+
+  if (
+    typeof input.maxBytes === 'number' &&
+    typeof response.ContentLength === 'number' &&
+    response.ContentLength > input.maxBytes
+  ) {
+    throw new StorageObjectTooLargeError({
+      byteSize: BigInt(response.ContentLength),
+      maxBytes: input.maxBytes,
+      objectKey: input.objectKey,
+    });
   }
 
   return new Uint8Array(await body.transformToByteArray());

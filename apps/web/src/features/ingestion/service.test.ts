@@ -189,6 +189,7 @@ describe('processIngestionJob', () => {
         sourceBlobContentType: null,
         sourceBlobId: null,
         sourceBlobObjectKey: null,
+        sourceBlobByteSize: null,
         sourceItemId: 'src_123',
         sourceKind: 'note' as const,
         sourceMetadata: {
@@ -327,6 +328,7 @@ describe('processIngestionJob', () => {
         sourceBlobContentType: 'application/pdf',
         sourceBlobId: 'blob_123',
         sourceBlobObjectKey: 'spaces/spc_123/blob_123/archive.pdf',
+        sourceBlobByteSize: 1024n,
         sourceItemId: 'src_123',
         sourceKind: 'file' as const,
         sourceMetadata: {},
@@ -385,6 +387,7 @@ describe('processIngestionJob', () => {
         sourceBlobContentType: null,
         sourceBlobId: null,
         sourceBlobObjectKey: null,
+        sourceBlobByteSize: null,
         sourceItemId: 'src_123',
         sourceKind: 'note' as const,
         sourceMetadata: {

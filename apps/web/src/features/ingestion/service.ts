@@ -1,9 +1,7 @@
 import 'server-only';
 
 import { createHash } from 'node:crypto';
-
 import { ORPCError } from '@orpc/server';
-
 import { generateId } from '@/db/columns/id';
 import { inngest } from '@/inngest/client';
 import { createIngestionJobRequestedEvent } from '@/inngest/events';
@@ -14,7 +12,7 @@ import {
 import { getRequestLogger } from '@/lib/evlog';
 import { buildSegmentsFromExtractedDocument } from './chunking';
 import { IngestionPipelineError } from './errors';
-import { extractSourceDocument } from './extraction';
+import type { ExtractSourceDocumentInput } from './extraction';
 import {
   createIngestionRepository,
   type IngestionJobStage,
@@ -59,8 +57,15 @@ type ProcessDeps = {
   repository: IngestionRepository;
   run: IngestionStepRunner;
   buildSegmentsFromDocument?: typeof buildSegmentsFromExtractedDocument;
-  extractSourceDocument?: typeof extractSourceDocument;
+  extractSourceDocument?: (
+    job: ExtractSourceDocumentInput,
+  ) => ReturnType<typeof import('./extraction').extractSourceDocument>;
 };
+
+async function loadExtractSourceDocument() {
+  const module = await import('./extraction');
+  return module.extractSourceDocument;
+}
 
 type PublishRealtimeDeps = {
   publish: typeof inngest.realtime.publish;
@@ -254,7 +259,6 @@ export async function processIngestionJob(
     repository: createIngestionRepository(),
     run: async (_stepId, fn) => fn(),
     buildSegmentsFromDocument: buildSegmentsFromExtractedDocument,
-    extractSourceDocument,
   },
 ) {
   const publishRealtimeUpdate = async (
@@ -351,7 +355,10 @@ export async function processIngestionJob(
 
     const extractedDocument = await deps.run(
       'extract-source-document',
-      async () => (deps.extractSourceDocument ?? extractSourceDocument)(job),
+      async () =>
+        (deps.extractSourceDocument ?? (await loadExtractSourceDocument()))(
+          job,
+        ),
     );
     currentStage = 'segment';
     const segments = (
