@@ -1,7 +1,10 @@
 import 'server-only';
 
-import type { FusedRetrievalCandidate } from '@/features/retrieval';
 import { retrieveGroundedEvidence } from '@/features/retrieval/service';
+import type {
+  FusedRetrievalCandidate,
+  RetrievalSourceKind,
+} from '@/features/retrieval/types';
 import { generateGroundedAnswer, repairGroundedAnswer } from '@/lib/ai/query';
 import { getRequestLogger } from '@/lib/evlog';
 import type { AskQueryEvent } from './schemas';
@@ -19,9 +22,7 @@ type AskQueryInput = {
   capturedAfter?: Date;
   capturedBefore?: Date;
   question: string;
-  sourceKinds?: Array<
-    'api' | 'bookmark' | 'chat' | 'email' | 'file' | 'note' | 'web_page'
-  >;
+  sourceKinds?: RetrievalSourceKind[];
   spaceId?: string;
   userId: string;
 };
@@ -46,14 +47,7 @@ type PreparedCitation = {
   };
   segmentIds: string[];
   sourceItemId: string;
-  sourceKind:
-    | 'api'
-    | 'bookmark'
-    | 'chat'
-    | 'email'
-    | 'file'
-    | 'note'
-    | 'web_page';
+  sourceKind: RetrievalSourceKind;
   sourceTitle: string | null;
 };
 

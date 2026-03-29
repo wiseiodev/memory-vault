@@ -53,6 +53,15 @@ describe('askQueryInput', () => {
     ).toThrow();
   });
 
+  it('rejects ISO-looking strings that do not form a valid datetime', () => {
+    expect(() =>
+      askQueryInput.parse({
+        capturedAfter: '2026-99-29T10:00:00.000Z',
+        question: 'what happened?',
+      }),
+    ).toThrow();
+  });
+
   it('rejects reversed ranges after coercion', () => {
     expect(() =>
       askQueryInput.parse({

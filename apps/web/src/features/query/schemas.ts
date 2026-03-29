@@ -26,7 +26,10 @@ const optionalDateTimeInput = z.preprocess(
           message:
             'must be an ISO 8601 datetime string with timezone information.',
         })
-        .transform((value) => new Date(value)),
+        .transform((value) => new Date(value))
+        .refine((date) => !Number.isNaN(date.getTime()), {
+          message: 'must be a valid datetime.',
+        }),
     ])
     .optional(),
 );

@@ -1,5 +1,26 @@
 import { describe, expect, it, vi } from 'vitest';
 
+const { createClientMock, redisClient } = vi.hoisted(() => {
+  const redisClient = {
+    connect: vi.fn(async function connect() {
+      return redisClient;
+    }),
+    disconnect: vi.fn(),
+    get: vi.fn(),
+    on: vi.fn(),
+    set: vi.fn(),
+  };
+
+  return {
+    createClientMock: vi.fn(() => redisClient),
+    redisClient,
+  };
+});
+
+vi.mock('redis', () => ({
+  createClient: createClientMock,
+}));
+
 const requestLogger = {
   warn: vi.fn(),
 };
@@ -8,7 +29,11 @@ vi.mock('@/lib/evlog', () => ({
   getRequestLogger: vi.fn(() => requestLogger),
 }));
 
-import { buildAiCacheKey, createEmbeddingCacheMiddleware } from './cache';
+import {
+  buildAiCacheKey,
+  createEmbeddingCacheMiddleware,
+  createRedisAiCacheStore,
+} from './cache';
 
 type TestEmbeddingResult = {
   embeddings: number[][];
@@ -151,5 +176,37 @@ describe('createEmbeddingCacheMiddleware', () => {
 
     expect(doEmbed).toHaveBeenCalledTimes(1);
     expect(requestLogger.warn).toHaveBeenCalled();
+  });
+});
+
+describe('createRedisAiCacheStore', () => {
+  it('registers a redis error handler and logs emitted client errors', async () => {
+    process.env.REDIS_URL = 'redis://localhost:6379';
+    redisClient.on.mockClear();
+    createClientMock.mockClear();
+    requestLogger.warn.mockClear();
+
+    const store = createRedisAiCacheStore();
+
+    expect(store).not.toBeNull();
+    expect(createClientMock).toHaveBeenCalledWith({
+      url: 'redis://localhost:6379',
+    });
+    expect(redisClient.on).toHaveBeenCalledWith('error', expect.any(Function));
+
+    const errorHandler = redisClient.on.mock.calls.find(
+      ([eventName]) => eventName === 'error',
+    )?.[1] as ((error: Error) => void) | undefined;
+
+    if (!errorHandler) {
+      throw new Error('Expected redis error handler to be registered.');
+    }
+
+    errorHandler(new Error('socket closed'));
+
+    expect(requestLogger.warn).toHaveBeenCalledWith('ai.cache.degraded', {
+      reason: 'socket closed',
+      scope: 'redis',
+    });
   });
 });

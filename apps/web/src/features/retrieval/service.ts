@@ -132,9 +132,9 @@ function createSegmentBundle(
     fusionScore,
     locators: [
       {
+        ...candidate.metadata,
         ordinal: candidate.ordinal,
         segmentId: candidate.segmentId,
-        ...candidate.metadata,
       },
     ],
     memorySummary: null,
@@ -182,10 +182,10 @@ function createMemoryBundle(
     fusionScore,
     locators: uniqueJsonObjects(
       citations.map((citation) => ({
-        ordinal: citation.segmentOrdinal,
-        segmentId: citation.segmentId,
         ...citation.locator,
         ...citation.segmentMetadata,
+        ordinal: citation.segmentOrdinal,
+        segmentId: citation.segmentId,
       })),
     ),
     memoryId: candidate.memoryId,
@@ -565,14 +565,24 @@ export async function retrieveGroundedEvidence(
   const memoryIds = uniqueStrings(
     [...memoryText, ...memoryVector].map((candidate) => candidate.memoryId),
   );
-  const citations = await deps.repository.listGroundingCitationsForMemories({
-    capturedAfter: input.capturedAfter,
-    capturedBefore: input.capturedBefore,
-    memoryIds,
-    sourceKinds: input.sourceKinds,
-    spaceId: input.spaceId,
-    userId: input.userId,
-  });
+  let citations: GroundingCitation[] = [];
+
+  try {
+    citations = await deps.repository.listGroundingCitationsForMemories({
+      capturedAfter: input.capturedAfter,
+      capturedBefore: input.capturedBefore,
+      memoryIds,
+      sourceKinds: input.sourceKinds,
+      spaceId: input.spaceId,
+      userId: input.userId,
+    });
+  } catch (error) {
+    logger.warn('query.retrieval.memory_citations.degraded', {
+      memoryCount: memoryIds.length,
+      reason: error instanceof Error ? error.message : 'unknown',
+    });
+  }
+
   const citationsByMemoryId = new Map<string, GroundingCitation[]>();
 
   for (const citation of citations) {

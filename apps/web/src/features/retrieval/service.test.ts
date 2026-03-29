@@ -1,4 +1,4 @@
-import { describe, expect, it, vi } from 'vitest';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { EMBEDDING_DIMENSIONS } from '@/db/columns';
 
@@ -17,6 +17,10 @@ import {
   searchSegmentsByText,
   searchSegmentsByVector,
 } from './service';
+
+beforeEach(() => {
+  requestLogger.warn.mockReset();
+});
 
 function createEmbedding(seed: number) {
   return Array.from({ length: EMBEDDING_DIMENSIONS }, (_value, index) => {
@@ -248,6 +252,94 @@ describe('searchSegmentsByVector', () => {
 });
 
 describe('retrieveGroundedEvidence', () => {
+  it('falls back to segment-only evidence when memory citation hydration fails', async () => {
+    const repository = createRepositoryMocks();
+    repository.searchSegmentsByText.mockResolvedValue([
+      {
+        canonicalUri: 'https://example.com/note',
+        content: 'Pack the charger before leaving.',
+        effectiveSourceAt: new Date('2026-03-29T10:00:00.000Z'),
+        metadata: { page: 1 },
+        ordinal: 1,
+        retrievalMode: 'text',
+        score: 0.91,
+        segmentId: 'seg_1',
+        segmentKind: 'plain_text',
+        sourceBlobId: null,
+        sourceItemId: 'src_1',
+        sourceKind: 'note',
+        sourceTitle: 'Trip note',
+      },
+    ]);
+    repository.searchSegmentsByVector.mockResolvedValue([]);
+    repository.searchMemoriesByText.mockResolvedValue([
+      {
+        canonicalUri: null,
+        confidence: 0.8,
+        content: 'Remember to pack the charger.',
+        createdAt: new Date('2026-03-29T09:00:00.000Z'),
+        memoryId: 'mem_1',
+        score: 0.83,
+        summary: 'Pack the charger.',
+        title: 'Packing memory',
+        updatedAt: new Date('2026-03-29T10:00:00.000Z'),
+      },
+    ]);
+    repository.searchMemoriesByVector.mockResolvedValue([]);
+    repository.listGroundingCitationsForMemories.mockRejectedValue(
+      new Error('memory citations unavailable'),
+    );
+
+    const result = await retrieveGroundedEvidence(
+      {
+        question: 'what do i need to pack?',
+        userId: 'user_123',
+      },
+      {
+        embedDocumentTextValues: vi.fn(),
+        embedQueryText: vi.fn(async () => ({
+          embedding: createEmbedding(1),
+          model: 'google/gemini-embedding-2',
+        })),
+        normalizeQueryText: vi.fn(async () => ({
+          configuredModel: 'google/gemini-3-flash',
+          normalizedQuery: 'what do i need to pack?',
+          providerRoute: ['google/gemini-3-flash'],
+          responseModel: 'google/gemini-3-flash',
+        })),
+        repository,
+        rerankRetrievalCandidates: vi.fn(async ({ candidates }) => ({
+          configuredModel: 'google/gemini-3-flash',
+          providerRoute: ['google/gemini-3-flash'],
+          responseModel: 'google/gemini-3-flash',
+          results: candidates.map(
+            (candidate: { candidateKey: string }, index: number) => ({
+              candidateKey: candidate.candidateKey,
+              rationale: 'Kept in fused order.',
+              score: 0.9 - index * 0.1,
+            }),
+          ),
+        })),
+      },
+    );
+
+    expect(result.bundles).toHaveLength(1);
+    expect(result.bundles[0]).toEqual(
+      expect.objectContaining({
+        bundleKey: 'segment:seg_1',
+        memoryId: undefined,
+        segmentIds: ['seg_1'],
+      }),
+    );
+    expect(requestLogger.warn).toHaveBeenCalledWith(
+      'query.retrieval.memory_citations.degraded',
+      expect.objectContaining({
+        memoryCount: 1,
+        reason: 'memory citations unavailable',
+      }),
+    );
+  });
+
   it('degrades normalization, vector retrieval, and reranking while collapsing overlapping evidence', async () => {
     const repository = createRepositoryMocks();
     repository.searchSegmentsByText.mockResolvedValue([
@@ -467,5 +559,120 @@ describe('retrieveGroundedEvidence', () => {
       spaceId: undefined,
       userId: 'user_123',
     });
+  });
+
+  it('preserves reserved locator fields when segment and memory metadata conflict', async () => {
+    const repository = createRepositoryMocks();
+    repository.searchSegmentsByText.mockResolvedValue([
+      {
+        canonicalUri: 'https://example.com/note-1',
+        content: 'Pack the charger before leaving.',
+        effectiveSourceAt: new Date('2026-03-29T10:00:00.000Z'),
+        metadata: { ordinal: 999, page: 1, segmentId: 'bad-segment' },
+        ordinal: 1,
+        retrievalMode: 'text',
+        score: 0.91,
+        segmentId: 'seg_1',
+        segmentKind: 'plain_text',
+        sourceBlobId: null,
+        sourceItemId: 'src_1',
+        sourceKind: 'note',
+        sourceTitle: 'Trip note',
+      },
+    ]);
+    repository.searchSegmentsByVector.mockResolvedValue([]);
+    repository.searchMemoriesByText.mockResolvedValue([
+      {
+        canonicalUri: null,
+        confidence: 0.8,
+        content: 'Remember to bring your passport.',
+        createdAt: new Date('2026-03-29T09:00:00.000Z'),
+        memoryId: 'mem_1',
+        score: 0.83,
+        summary: 'Bring your passport.',
+        title: 'Renewal memory',
+        updatedAt: new Date('2026-03-29T10:00:00.000Z'),
+      },
+    ]);
+    repository.searchMemoriesByVector.mockResolvedValue([]);
+    repository.listGroundingCitationsForMemories.mockResolvedValue([
+      {
+        canonicalUri: 'https://example.com/note-2',
+        locator: { ordinal: 444, page: 2, segmentId: 'wrong-locator' },
+        memoryCitationOrdinal: 1,
+        memoryId: 'mem_1',
+        quoteText: 'Bring your passport to the appointment.',
+        segmentContent: 'Bring your passport to the appointment.',
+        segmentId: 'seg_2',
+        segmentMetadata: {
+          ordinal: 555,
+          section: 'identity',
+          segmentId: 'wrong-metadata',
+        },
+        segmentOrdinal: 2,
+        sourceItemId: 'src_2',
+        sourceKind: 'note',
+        sourceTitle: 'Renewal note',
+      },
+    ]);
+
+    const result = await retrieveGroundedEvidence(
+      {
+        question: 'what should i bring?',
+        userId: 'user_123',
+      },
+      {
+        embedDocumentTextValues: vi.fn(),
+        embedQueryText: vi.fn(async () => ({
+          embedding: createEmbedding(2),
+          model: 'google/gemini-embedding-2',
+        })),
+        normalizeQueryText: vi.fn(async () => ({
+          configuredModel: 'google/gemini-3-flash',
+          normalizedQuery: 'what should i bring?',
+          providerRoute: ['google/gemini-3-flash'],
+          responseModel: 'google/gemini-3-flash',
+        })),
+        repository,
+        rerankRetrievalCandidates: vi.fn(async ({ candidates }) => ({
+          configuredModel: 'google/gemini-3-flash',
+          providerRoute: ['google/gemini-3-flash'],
+          responseModel: 'google/gemini-3-flash',
+          results: candidates.map(
+            (candidate: { candidateKey: string }, index: number) => ({
+              candidateKey: candidate.candidateKey,
+              rationale: 'Kept in fused order.',
+              score: 0.9 - index * 0.1,
+            }),
+          ),
+        })),
+      },
+    );
+
+    expect(result.bundles).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          bundleKey: 'segment:seg_1',
+          locators: [
+            expect.objectContaining({
+              ordinal: 1,
+              page: 1,
+              segmentId: 'seg_1',
+            }),
+          ],
+        }),
+        expect.objectContaining({
+          bundleKey: 'segment:seg_2',
+          locators: [
+            expect.objectContaining({
+              ordinal: 2,
+              page: 2,
+              section: 'identity',
+              segmentId: 'seg_2',
+            }),
+          ],
+        }),
+      ]),
+    );
   });
 });

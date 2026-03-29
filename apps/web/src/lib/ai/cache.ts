@@ -78,12 +78,24 @@ function getRedisClient() {
   }
 
   if (!redisClientPromise) {
-    redisClientPromise = createClient({
+    const client = createClient({
       url: redisUrl,
-    })
+    });
+
+    client.on('error', (error) => {
+      logCacheWarning('redis', error);
+    });
+
+    redisClientPromise = client
       .connect()
+      .then(() => client)
       .catch((error) => {
         redisClientPromise = null;
+        try {
+          client.disconnect();
+        } catch {
+          // ignore disconnect errors while degrading cache usage
+        }
         throw error;
       });
   }
