@@ -355,11 +355,45 @@ async function extractReadableHtml(html: string, url: string) {
   };
 }
 
+function ensurePdfServerGeometryPolyfills() {
+  const globalScope = globalThis as typeof globalThis & {
+    DOMMatrix?: typeof DOMMatrix;
+  };
+
+  if (globalScope.DOMMatrix) {
+    return;
+  }
+
+  class ServerDOMMatrix {
+    a = 1;
+    b = 0;
+    c = 0;
+    d = 1;
+    e = 0;
+    f = 0;
+
+    scaleSelf(scaleX: number, scaleY = scaleX) {
+      this.a *= scaleX;
+      this.b *= scaleX;
+      this.c *= scaleY;
+      this.d *= scaleY;
+      return this;
+    }
+
+    translateSelf(translateX: number, translateY: number) {
+      this.e += this.a * translateX + this.c * translateY;
+      this.f += this.b * translateX + this.d * translateY;
+      return this;
+    }
+  }
+
+  globalScope.DOMMatrix = ServerDOMMatrix as typeof DOMMatrix;
+}
+
 async function loadPdfJsForServer(): Promise<PdfJsModule> {
-  const [pdfjs, pdfjsWorker] = await Promise.all([
-    import('pdfjs-dist/legacy/build/pdf.mjs'),
-    import('pdfjs-dist/legacy/build/pdf.worker.mjs'),
-  ]);
+  const pdfjs = await import('pdfjs-dist/legacy/build/pdf.mjs');
+  ensurePdfServerGeometryPolyfills();
+  const pdfjsWorker = await import('pdfjs-dist/legacy/build/pdf.worker.mjs');
   const globalPdfJsWorker = globalThis as typeof globalThis & {
     pdfjsWorker?: { WorkerMessageHandler?: unknown };
   };

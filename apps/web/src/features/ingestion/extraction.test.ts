@@ -536,8 +536,16 @@ describe('extractSourceDocument', () => {
 
   it('preloads the pdfjs worker module for server-side PDF extraction', async () => {
     vi.resetModules();
+    const originalDOMMatrix = globalThis.DOMMatrix;
+    // Simulate a server runtime where pdfjs needs to install its own geometry
+    // support before the worker module evaluates.
+    // @ts-expect-error test override
+    globalThis.DOMMatrix = undefined;
     vi.doMock('pdfjs-dist/legacy/build/pdf.worker.mjs', () => ({
-      WorkerMessageHandler: { setup: vi.fn() },
+      WorkerMessageHandler: {
+        domMatrixTypeAtImport: typeof globalThis.DOMMatrix,
+        setup: vi.fn(),
+      },
     }));
     const getOperatorList = vi.fn(async () => ({ fnArray: [] }));
     vi.doMock('pdfjs-dist/legacy/build/pdf.mjs', () => ({
@@ -558,7 +566,11 @@ describe('extractSourceDocument', () => {
       bytes: new Uint8Array([1, 2, 3]),
     });
     const globalPdfJsWorker = globalThis as typeof globalThis & {
-      pdfjsWorker?: { WorkerMessageHandler?: unknown };
+      pdfjsWorker?: {
+        WorkerMessageHandler?: {
+          domMatrixTypeAtImport?: string;
+        };
+      };
     };
 
     expect(extraction.pages).toEqual([
@@ -568,7 +580,18 @@ describe('extractSourceDocument', () => {
       },
     ]);
     expect(getOperatorList).not.toHaveBeenCalled();
+    expect(
+      globalPdfJsWorker.pdfjsWorker?.WorkerMessageHandler
+        ?.domMatrixTypeAtImport,
+    ).toBe('function');
     expect(globalPdfJsWorker.pdfjsWorker?.WorkerMessageHandler).toBeDefined();
+
+    if (originalDOMMatrix) {
+      globalThis.DOMMatrix = originalDOMMatrix;
+    } else {
+      // @ts-expect-error test cleanup
+      delete globalThis.DOMMatrix;
+    }
 
     vi.doUnmock('pdfjs-dist/legacy/build/pdf.mjs');
     vi.doUnmock('pdfjs-dist/legacy/build/pdf.worker.mjs');
