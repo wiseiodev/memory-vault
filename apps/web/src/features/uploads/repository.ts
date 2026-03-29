@@ -3,7 +3,7 @@ import 'server-only';
 import { and, desc, eq, isNull } from 'drizzle-orm';
 
 import { getDb } from '@/db';
-import { sourceBlobs, sourceItems, spaces } from '@/db/schema';
+import { ingestionJobs, sourceBlobs, sourceItems, spaces } from '@/db/schema';
 
 type Db = ReturnType<typeof getDb>;
 
@@ -38,6 +38,11 @@ export type UploadRepository = {
     byteSize: bigint;
     contentType: string | null;
     etag: string | null;
+    ingestionJob: {
+      id: string;
+      maxAttempts: number;
+      payload: Record<string, unknown>;
+    };
     sourceBlobId: string;
     sourceItemId: string;
     uploadedAt: Date;
@@ -47,6 +52,7 @@ export type UploadRepository = {
     byteSize: bigint | null;
     contentType: string | null;
     etag: string | null;
+    ingestionJobId: string;
     objectKey: string;
     sourceBlobId: string;
     sourceItemId: string;
@@ -303,8 +309,42 @@ export function createUploadRepository(db: Db = getDb()): UploadRepository {
             ),
           );
 
+        const [existingJob] = await tx
+          .select({
+            jobId: ingestionJobs.id,
+          })
+          .from(ingestionJobs)
+          .where(
+            and(
+              eq(ingestionJobs.sourceItemId, input.sourceItemId),
+              eq(ingestionJobs.kind, 'ingest'),
+            ),
+          )
+          .limit(1);
+
+        const ingestionJobId =
+          existingJob?.jobId ??
+          (
+            await tx
+              .insert(ingestionJobs)
+              .values({
+                id: input.ingestionJob.id,
+                kind: 'ingest',
+                maxAttempts: input.ingestionJob.maxAttempts,
+                payload: input.ingestionJob.payload,
+                sourceItemId: input.sourceItemId,
+                spaceId: ownedBlob.spaceId,
+                stage: 'extract',
+                status: 'queued',
+              })
+              .returning({
+                jobId: ingestionJobs.id,
+              })
+          )[0].jobId;
+
         return {
           ...finalBlob,
+          ingestionJobId,
           sourceItemId: ownedBlob.sourceItemId,
           spaceId: ownedBlob.spaceId,
           uploadedAt: finalBlob.uploadedAt?.toISOString() ?? null,

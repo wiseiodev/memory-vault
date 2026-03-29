@@ -248,6 +248,7 @@ describe('completeUpload', () => {
       byteSize: 64n,
       contentType: 'text/plain',
       etag: 'etag-123',
+      ingestionJobId: 'job_123',
       objectKey: 'spaces/spc_123/sources/src_123/blobs/blob_123/note.txt',
       sourceBlobId: 'blob_123',
       sourceItemId: 'src_123',
@@ -287,6 +288,14 @@ describe('completeUpload', () => {
       byteSize: 64n,
       contentType: 'text/plain',
       etag: 'etag-123',
+      ingestionJob: {
+        id: 'job_123',
+        maxAttempts: 3,
+        payload: {
+          sourceBlobId: 'blob_123',
+          sourceKind: 'file',
+        },
+      },
       sourceBlobId: 'blob_123',
       sourceItemId: 'src_123',
       uploadedAt: new Date('2026-03-28T21:00:00.000Z'),
@@ -297,6 +306,7 @@ describe('completeUpload', () => {
       byteSize: '64',
       contentType: 'text/plain',
       etag: 'etag-123',
+      ingestionJobId: 'job_123',
       objectKey: 'spaces/spc_123/sources/src_123/blobs/blob_123/note.txt',
       sourceBlobId: 'blob_123',
       sourceItemId: 'src_123',
@@ -321,6 +331,7 @@ describe('completeUpload', () => {
             byteSize: 64n,
             contentType: 'text/plain',
             etag: 'etag-123',
+            ingestionJobId: 'job_123',
             objectKey: 'spaces/spc_123/sources/src_123/blobs/blob_123/note.txt',
             sourceBlobId: 'blob_123',
             sourceItemId: 'src_123',
@@ -346,6 +357,7 @@ describe('completeUpload', () => {
     );
 
     expect(result.uploadedAt).toBe('2026-03-28T20:59:00.000Z');
+    expect(result.ingestionJobId).toBe('job_123');
     expect(result.etag).toBe('etag-123');
     expect(result.byteSize).toBe('64');
   });

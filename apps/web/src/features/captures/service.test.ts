@@ -28,11 +28,13 @@ describe('createNoteCapture', () => {
   it('creates a canonical note source item with raw content in metadata', async () => {
     const createCapture = vi.fn(async (input) => ({
       capturedAt: '2026-03-29T00:10:00.000Z',
+      jobId: input.ingestionJob.id,
       kind: input.kind,
       sourceItemId: input.sourceItemId,
       spaceId: input.spaceId,
       status: 'pending' as const,
     }));
+    const dispatchIngestionJob = vi.fn(async () => undefined);
 
     const result = await createNoteCapture(
       {
@@ -41,6 +43,7 @@ describe('createNoteCapture', () => {
         userId: 'user_123',
       },
       {
+        dispatchIngestionJob,
         now: () => new Date('2026-03-29T00:10:00.000Z'),
         repository: {
           ...createRepositoryMocks(),
@@ -61,6 +64,13 @@ describe('createNoteCapture', () => {
     expect(createCapture).toHaveBeenCalledWith({
       canonicalUri: null,
       capturedAt: new Date('2026-03-29T00:10:00.000Z'),
+      ingestionJob: {
+        id: 'job_123',
+        maxAttempts: 3,
+        payload: {
+          sourceKind: 'note',
+        },
+      },
       kind: 'note',
       metadata: {
         noteBody: 'Remember to renew the passport next month.',
@@ -69,6 +79,10 @@ describe('createNoteCapture', () => {
       spaceId: 'spc_123',
       title: 'Passport reminder',
       userId: 'user_123',
+    });
+    expect(dispatchIngestionJob).toHaveBeenCalledWith({
+      jobId: 'job_123',
+      sourceItemId: 'src_123',
     });
     expect(result).toEqual({
       capturedAt: '2026-03-29T00:10:00.000Z',
@@ -91,11 +105,13 @@ describe('createNoteCapture', () => {
         userId: 'user_123',
       },
       {
+        dispatchIngestionJob: vi.fn(async () => undefined),
         now: () => new Date('2026-03-29T00:10:00.000Z'),
         repository: {
           ...createRepositoryMocks(),
           createCapture: vi.fn(async (input) => ({
             capturedAt: '2026-03-29T00:10:00.000Z',
+            jobId: input.ingestionJob.id,
             kind: input.kind,
             sourceItemId: input.sourceItemId,
             spaceId: input.spaceId,
@@ -121,11 +137,13 @@ describe('createUrlCapture', () => {
   it('creates a canonical web page source item with URL metadata', async () => {
     const createCapture = vi.fn(async (input) => ({
       capturedAt: '2026-03-29T00:12:00.000Z',
+      jobId: input.ingestionJob.id,
       kind: input.kind,
       sourceItemId: input.sourceItemId,
       spaceId: input.spaceId,
       status: 'pending' as const,
     }));
+    const dispatchIngestionJob = vi.fn(async () => undefined);
 
     const result = await createUrlCapture(
       {
@@ -134,6 +152,7 @@ describe('createUrlCapture', () => {
         userId: 'user_123',
       },
       {
+        dispatchIngestionJob,
         now: () => new Date('2026-03-29T00:12:00.000Z'),
         repository: {
           ...createRepositoryMocks(),
@@ -157,6 +176,13 @@ describe('createUrlCapture', () => {
     expect(createCapture).toHaveBeenCalledWith({
       canonicalUri: 'https://example.com/trips/japan',
       capturedAt: new Date('2026-03-29T00:12:00.000Z'),
+      ingestionJob: {
+        id: 'job_123',
+        maxAttempts: 3,
+        payload: {
+          sourceKind: 'web_page',
+        },
+      },
       kind: 'web_page',
       metadata: {
         submittedUrl: 'https://example.com/trips/japan',
@@ -165,6 +191,10 @@ describe('createUrlCapture', () => {
       spaceId: 'spc_123',
       title: 'Trip planning doc',
       userId: 'user_123',
+    });
+    expect(dispatchIngestionJob).toHaveBeenCalledWith({
+      jobId: 'job_123',
+      sourceItemId: 'src_123',
     });
     expect(result).toEqual({
       capturedAt: '2026-03-29T00:12:00.000Z',
@@ -178,6 +208,8 @@ describe('createUrlCapture', () => {
 
 describe('finalizeUploadCapture', () => {
   it('delegates file finalization and returns the canonical capture summary', async () => {
+    const dispatchIngestionJob = vi.fn(async () => undefined);
+
     const result = await finalizeUploadCapture(
       {
         sourceBlobId: 'blob_123',
@@ -185,11 +217,13 @@ describe('finalizeUploadCapture', () => {
         userId: 'user_123',
       },
       {
+        dispatchIngestionJob,
         completeUpload: vi.fn(async () => ({
           bucket: 'memory-vault-bucket',
           byteSize: '64',
           contentType: 'text/plain',
           etag: 'etag-123',
+          ingestionJobId: 'job_123',
           objectKey: 'spaces/spc_123/sources/src_123/blobs/blob_123/note.txt',
           sourceBlobId: 'blob_123',
           sourceItemId: 'src_123',
@@ -199,6 +233,10 @@ describe('finalizeUploadCapture', () => {
       },
     );
 
+    expect(dispatchIngestionJob).toHaveBeenCalledWith({
+      jobId: 'job_123',
+      sourceItemId: 'src_123',
+    });
     expect(result).toEqual({
       capturedAt: '2026-03-29T00:14:00.000Z',
       kind: 'file',
@@ -218,11 +256,13 @@ describe('finalizeUploadCapture', () => {
           userId: 'user_123',
         },
         {
+          dispatchIngestionJob: vi.fn(async () => undefined),
           completeUpload: vi.fn(async () => ({
             bucket: 'memory-vault-bucket',
             byteSize: '64',
             contentType: 'text/plain',
             etag: 'etag-123',
+            ingestionJobId: 'job_123',
             objectKey: 'spaces/spc_123/sources/src_123/blobs/blob_123/note.txt',
             sourceBlobId: 'blob_123',
             sourceItemId: 'src_123',

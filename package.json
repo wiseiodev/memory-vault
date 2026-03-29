@@ -16,6 +16,7 @@
     "dev": "turbo run dev --ui=tui",
     "env:dev": "vercel env pull apps/web/.env.local",
     "env:sync": "tsx scripts/sync-vercel-bucket-envs.ts",
+    "inngest:dev": "pnpm --filter web inngest:dev",
     "prepare": "node -e \"const { existsSync, readdirSync } = require('node:fs'); const { join } = require('node:path'); const { spawnSync } = require('node:child_process'); if (!existsSync('.git') || !existsSync('node_modules/.pnpm')) process.exit(0); const entry = readdirSync('node_modules/.pnpm').find((name) => name.startsWith('lefthook@')); if (!entry) process.exit(0); const cli = join('node_modules', '.pnpm', entry, 'node_modules', 'lefthook', 'bin', 'index.js'); if (!existsSync(cli)) process.exit(0); const result = spawnSync(process.execPath, [cli, 'install'], { stdio: 'inherit' }); process.exit(result.status ?? 0);\"",
     "qc": "pnpm run check && pnpm run typecheck && turbo run test build --ui=tui",
     "sst:dev": "sst dev",
