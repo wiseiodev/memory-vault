@@ -1,5 +1,13 @@
+import type { Metadata } from 'next';
+import { CaptureVerificationCard } from '@/features/captures';
 import { UploadListCard, UploadVerificationCard } from '@/features/uploads';
 import { rpc } from '@/rpc/client';
+
+export const metadata: Metadata = {
+  title: 'App | Memory Vault',
+  description:
+    'Internal verification surface for Memory Vault capture flows and observability foundations.',
+};
 
 export default async function AppPage() {
   const uploads = await rpc.uploads.list();
@@ -8,42 +16,44 @@ export default async function AppPage() {
     <div className='space-y-6'>
       <div className='space-y-3'>
         <p className='text-xs font-semibold uppercase tracking-[0.18em] text-slate-500'>
-          LAB-117
+          LAB-142 + LAB-118
         </p>
         <h2 className='text-3xl font-semibold tracking-tight text-slate-950'>
-          Direct S3 uploads are wired into the first protected app route
+          Observability and canonical capture APIs are now wired into the app
+          shell
         </h2>
         <p className='max-w-2xl text-sm leading-7 text-slate-600'>
-          This shell stays intentionally narrow. It now proves the first blob
-          reservation, direct upload, and completion flow on top of the auth,
-          schema, and storage foundations.
+          This shell stays intentionally narrow. It now proves request-scoped
+          logging, direct S3 uploads, and canonical note or URL capture on top
+          of the auth, schema, and storage foundations.
         </p>
       </div>
 
       <div className='grid gap-4 md:grid-cols-2'>
         <article className='rounded-3xl border border-slate-200/80 bg-white/90 p-5'>
           <h3 className='text-sm font-semibold uppercase tracking-[0.18em] text-slate-500'>
-            Blob flow
+            Capture flow
           </h3>
           <p className='mt-3 text-sm leading-7 text-slate-700'>
-            Upload reservation creates canonical source rows first, the browser
-            `PUT`s directly to S3, and completion confirms the object before
-            final metadata is saved in Neon.
+            Notes and saved URLs now create canonical `source_items`
+            immediately, while file uploads still reserve storage first and then
+            finalize through the same capture surface.
           </p>
         </article>
 
         <article className='rounded-3xl border border-slate-200/80 bg-white/90 p-5'>
           <h3 className='text-sm font-semibold uppercase tracking-[0.18em] text-slate-500'>
-            Next step
+            Observability
           </h3>
           <p className='mt-3 text-sm leading-7 text-slate-700'>
-            Later tickets can build extraction, segmentation, and ingestion jobs
-            on top of the durable `source_items` and `source_blobs` records this
-            flow now produces.
+            The current auth and RPC routes now run under a shared evlog
+            foundation so later ingestion and query work can add structured
+            context without inventing another logger pattern.
           </p>
         </article>
       </div>
 
+      <CaptureVerificationCard />
       <UploadVerificationCard />
       <UploadListCard uploads={uploads} />
     </div>
