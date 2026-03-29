@@ -12,6 +12,9 @@ import {
   ingestionJobUpsertTopicName,
 } from '@/inngest/realtime';
 import { getRequestLogger } from '@/lib/evlog';
+import { buildSegmentsFromExtractedDocument } from './chunking';
+import { IngestionPipelineError } from './errors';
+import { extractSourceDocument } from './extraction';
 import {
   createIngestionRepository,
   type IngestionJobStage,
@@ -55,27 +58,14 @@ type ProcessDeps = {
   }) => Promise<void>;
   repository: IngestionRepository;
   run: IngestionStepRunner;
+  buildSegmentsFromDocument?: typeof buildSegmentsFromExtractedDocument;
+  extractSourceDocument?: typeof extractSourceDocument;
 };
 
 type PublishRealtimeDeps = {
   publish: typeof inngest.realtime.publish;
   repository: Pick<IngestionRepository, 'getJobRealtimeTarget'>;
 };
-
-class IngestionPipelineError extends Error {
-  code: string;
-  details?: Record<string, unknown>;
-
-  constructor(
-    code: string,
-    message: string,
-    details?: Record<string, unknown>,
-  ) {
-    super(message);
-    this.code = code;
-    this.details = details;
-  }
-}
 
 export async function dispatchIngestionJob(
   input: { jobId: string },
@@ -263,6 +253,8 @@ export async function processIngestionJob(
     publishJobUpdate: undefined,
     repository: createIngestionRepository(),
     run: async (_stepId, fn) => fn(),
+    buildSegmentsFromDocument: buildSegmentsFromExtractedDocument,
+    extractSourceDocument,
   },
 ) {
   const publishRealtimeUpdate = async (
@@ -357,32 +349,23 @@ export async function processIngestionJob(
       'publish-running-job-update',
     );
 
-    if (job.sourceKind !== 'note') {
-      throw new IngestionPipelineError(
-        'EXTRACTOR_NOT_IMPLEMENTED',
-        `${job.sourceKind ?? 'unknown'} ingestion is not implemented yet.`,
-        {
-          sourceKind: job.sourceKind,
-        },
-      );
-    }
-
-    const noteBody = job.sourceMetadata.noteBody;
-
-    if (typeof noteBody !== 'string' || noteBody.trim().length === 0) {
-      throw new IngestionPipelineError(
-        'NOTE_BODY_MISSING',
-        'The captured note is missing noteBody metadata.',
-      );
-    }
-
+    const extractedDocument = await deps.run(
+      'extract-source-document',
+      async () => (deps.extractSourceDocument ?? extractSourceDocument)(job),
+    );
     currentStage = 'segment';
-    const noteSegments = buildNoteSegments(noteBody);
+    const segments = (
+      deps.buildSegmentsFromDocument ?? buildSegmentsFromExtractedDocument
+    )(extractedDocument);
     await deps.run('replace-note-segments', async () =>
       deps.repository.replaceSegments({
+        canonicalUri: extractedDocument.canonicalUri,
         jobId: job.jobId,
-        segments: noteSegments,
+        languageCode: extractedDocument.languageCode,
+        mimeType: extractedDocument.mimeType,
+        segments,
         sourceItemId,
+        title: extractedDocument.title,
         updatedAt: deps.now(),
       }),
     );
@@ -431,7 +414,7 @@ export async function processIngestionJob(
 
     return {
       jobId: job.jobId,
-      segmentCount: noteSegments.length,
+      segmentCount: segments.length,
       status: 'succeeded' as const,
     };
   } catch (error) {

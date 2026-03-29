@@ -110,6 +110,24 @@ export async function createPresignedDownload(input: { objectKey: string }) {
   });
 }
 
+export async function readObjectBytes(input: { objectKey: string }) {
+  const config = getStorageConfig();
+  const response = await getS3Client().send(
+    new GetObjectCommand({
+      Bucket: config.bucket,
+      Key: input.objectKey,
+    }),
+  );
+
+  const body = response.Body;
+
+  if (!body) {
+    throw new Error(`Object body was empty for key ${input.objectKey}.`);
+  }
+
+  return new Uint8Array(await body.transformToByteArray());
+}
+
 export async function deleteObject(input: { objectKey: string }) {
   const config = getStorageConfig();
 
