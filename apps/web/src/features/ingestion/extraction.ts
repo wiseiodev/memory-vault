@@ -44,6 +44,8 @@ type PdfTextExtraction = {
   totalPages: number;
 };
 
+type PdfJsModule = typeof import('pdfjs-dist/legacy/build/pdf.mjs');
+
 type ExtractSourceDeps = {
   assertSafeWebUrl: (url: string) => Promise<string>;
   extractHardWebPageWithAi: typeof extractHardWebPageWithAi;
@@ -353,10 +355,28 @@ async function extractReadableHtml(html: string, url: string) {
   };
 }
 
+async function loadPdfJsForServer(): Promise<PdfJsModule> {
+  const [pdfjs, pdfjsWorker] = await Promise.all([
+    import('pdfjs-dist/legacy/build/pdf.mjs'),
+    import('pdfjs-dist/legacy/build/pdf.worker.mjs'),
+  ]);
+  const globalPdfJsWorker = globalThis as typeof globalThis & {
+    pdfjsWorker?: { WorkerMessageHandler?: unknown };
+  };
+
+  if (!globalPdfJsWorker.pdfjsWorker?.WorkerMessageHandler) {
+    globalPdfJsWorker.pdfjsWorker = {
+      WorkerMessageHandler: pdfjsWorker.WorkerMessageHandler,
+    };
+  }
+
+  return pdfjs;
+}
+
 async function defaultExtractPdfPages(input: {
   bytes: Uint8Array;
 }): Promise<PdfTextExtraction> {
-  const pdfjs = await import('pdfjs-dist/legacy/build/pdf.mjs');
+  const pdfjs = await loadPdfJsForServer();
   const document = await pdfjs.getDocument({
     data: input.bytes,
     useWorkerFetch: false,
@@ -411,6 +431,7 @@ async function defaultExtractPdfPages(input: {
 
 function aiPagesToDocument(input: {
   canonicalUri: string | null;
+  configuredModel?: string;
   fallbackReason: string;
   kind: 'ocr' | 'plain_text';
   model: string;
@@ -419,30 +440,48 @@ function aiPagesToDocument(input: {
   providerRoute: string[];
   sourceBlobId: string | null;
 }) {
+  const configuredPrimaryModel = input.configuredModel ?? input.model;
+  const responseProvider = input.model.includes('/')
+    ? input.model.split('/')[0]
+    : null;
+  const providerFallbackUsed = input.model !== configuredPrimaryModel;
+
   return buildExtractedDocument({
     blocks: input.output.pages.map((page) => ({
       content: page.content,
       kind: input.kind,
       metadata: {
+        configuredPrimaryModel,
         extractionStrategy: 'gateway_fallback',
         extractor: 'vercel-ai-gateway',
         fallbackReason: input.fallbackReason,
         fallbackUsed: true,
         model: input.model,
         pageNumber: page.pageNumber ?? undefined,
+        providerFallbackUsed,
         providerRoute: input.providerRoute,
+        providerRouteType: 'configured_fallback_order',
+        responseModel: input.model,
+        responseProvider,
+        configuredProviderRoute: input.providerRoute,
       },
     })),
     canonicalUri: input.canonicalUri,
     languageCode: input.output.languageCode ?? null,
     metadata: {
       confidence: input.output.confidence ?? null,
+      configuredPrimaryModel,
       extractionStrategy: 'gateway_fallback',
       fallbackReason: input.fallbackReason,
       fallbackUsed: true,
       model: input.model,
       providerRoute: input.providerRoute,
+      providerFallbackUsed,
+      providerRouteType: 'configured_fallback_order',
       reason: input.output.reason ?? null,
+      responseModel: input.model,
+      responseProvider,
+      configuredProviderRoute: input.providerRoute,
     },
     mimeType: input.mimeType,
     sourceBlobId: input.sourceBlobId,
@@ -499,9 +538,10 @@ async function fallbackWebPageToAi(input: {
 
   return aiPagesToDocument({
     canonicalUri: input.canonicalUri,
+    configuredModel: aiResult.configuredModel,
     fallbackReason: input.fallbackReason,
     kind: 'plain_text',
-    model: aiResult.model,
+    model: aiResult.responseModel ?? aiResult.model,
     mimeType: 'text/html',
     output: aiResult.output,
     providerRoute: aiResult.providerRoute,
@@ -555,7 +595,9 @@ async function extractFileBytesDocument(
 
   if (inferredMimeType === 'application/pdf') {
     const extraction = await deps.extractPdfPages({
-      bytes: input.bytes,
+      // pdfjs may transfer/detach the provided buffer while parsing.
+      // Keep the original bytes intact for an OCR fallback path.
+      bytes: input.bytes.slice(),
     });
 
     if (extraction.pages.length > 0 && extraction.imageOnlyPageCount === 0) {
@@ -591,9 +633,10 @@ async function extractFileBytesDocument(
 
     return aiPagesToDocument({
       canonicalUri: input.canonicalUri,
+      configuredModel: aiResult.configuredModel,
       fallbackReason: 'scanned_pdf',
       kind: 'ocr',
-      model: aiResult.model,
+      model: aiResult.responseModel ?? aiResult.model,
       mimeType: inferredMimeType,
       output: aiResult.output,
       providerRoute: aiResult.providerRoute,
@@ -610,9 +653,10 @@ async function extractFileBytesDocument(
 
     return aiPagesToDocument({
       canonicalUri: input.canonicalUri,
+      configuredModel: aiResult.configuredModel,
       fallbackReason: 'image_ocr',
       kind: 'ocr',
-      model: aiResult.model,
+      model: aiResult.responseModel ?? aiResult.model,
       mimeType: inferredMimeType,
       output: aiResult.output,
       providerRoute: aiResult.providerRoute,
@@ -903,3 +947,8 @@ export async function extractSourceDocument(
     },
   );
 }
+
+export const __private__ = {
+  defaultExtractPdfPages,
+  loadPdfJsForServer,
+};

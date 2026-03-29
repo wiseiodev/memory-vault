@@ -15,11 +15,11 @@ The workflow now accepts the three v1 source kinds already entering the app:
 - `file`
 
 It extracts canonical text, chunks that text into ordered `segments`, persists
-provenance-rich segment rows, and advances the job through the remaining
-placeholder stages needed by the broader ingestion pipeline.
+provenance-rich segment rows, generates embeddings for those text segments, and
+advances the job through the remaining placeholder stages needed by the broader
+ingestion pipeline.
 
-It does **not** generate embeddings or memories yet. Those remain follow-up
-work.
+It still does **not** perform retrieval fusion, reranking, or memory promotion.
 
 ## End-To-End Shape
 
@@ -32,8 +32,8 @@ flowchart LR
     E --> F["canonical extracted document"]
     F --> G["segment stage"]
     G --> H["segments persisted with provenance"]
-    H --> I["embed stage placeholder"]
-    I --> J["promote stage placeholder"]
+    H --> I["embed stage"]
+    I --> J["segment embeddings persisted"]
     J --> K["job marked complete"]
 ```
 
@@ -49,8 +49,9 @@ flowchart TD
     D --> F["segment"]
     F --> G["replace segments atomically"]
     G --> H["embed"]
-    H --> I["promote"]
-    I --> J["complete"]
+    H --> I["persist embeddings"]
+    I --> J["promote"]
+    J --> K["complete"]
 ```
 
 ## What You Can Process Through This Workflow
@@ -138,8 +139,15 @@ Current policy:
   - primary: `google/gemini-3.1-pro-preview`
   - fallback chain: `openai/gpt-5`, `anthropic/claude-sonnet-4.6`
 
-AI is used for extraction and normalization only, not summarization or memory
-synthesis.
+AI is used for extraction, normalization, and segment embeddings only, not
+summarization or memory synthesis.
+
+Current embedding policy:
+
+- `google/gemini-embedding-2` through Vercel AI Gateway
+- stored dimension remains `1536`
+- retrieval units are still text `segments`, even though the embedding model can
+  accept multimodal inputs for future work
 
 ## Canonical Output Shape
 
@@ -180,12 +188,11 @@ Segmentation then persists ordered rows with:
 - DOCX extraction
 - audio extraction
 - video extraction
-- embeddings
 - retrieval ranking
 - memory synthesis or promotion logic beyond stage placeholders
 
 Those remain later tickets even though the ingestion pipeline is now ready to
-hand off canonical segments to them.
+hand off embedded text segments to them.
 
 ## Operational Verification
 

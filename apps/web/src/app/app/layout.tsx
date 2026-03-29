@@ -54,11 +54,11 @@ export default async function AppLayout({ children }: AppLayoutProps) {
         </div>
       </header>
 
-      <main className='grid gap-6 lg:grid-cols-[1.6fr_0.9fr]'>
-        <section className='surface rounded-[2rem] p-6 shadow-[0_30px_80px_-40px_rgba(15,23,42,0.55)]'>
+      <main className='grid gap-6 lg:grid-cols-[minmax(0,1.6fr)_minmax(0,0.9fr)]'>
+        <section className='surface min-w-0 rounded-[2rem] p-6 shadow-[0_30px_80px_-40px_rgba(15,23,42,0.55)]'>
           {children}
         </section>
-        <aside className='surface rounded-[2rem] p-6 shadow-[0_30px_80px_-40px_rgba(15,23,42,0.55)]'>
+        <aside className='surface min-w-0 rounded-[2rem] p-6 shadow-[0_30px_80px_-40px_rgba(15,23,42,0.55)]'>
           <h2 className='text-sm font-semibold uppercase tracking-[0.18em] text-slate-500'>
             Session details
           </h2>

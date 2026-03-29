@@ -52,6 +52,13 @@ function buildProviderRoute(input: {
   return [input.primaryModel, ...input.fallbackModels];
 }
 
+function resolveResponseModel(input: {
+  primaryModel: string;
+  result: Awaited<ReturnType<typeof generateText>>;
+}) {
+  return input.result.response.modelId || input.primaryModel;
+}
+
 export async function extractHardWebPageWithAi(input: {
   html?: string | null;
   title: string | null;
@@ -113,10 +120,15 @@ export async function extractHardWebPageWithAi(input: {
   });
 
   return {
+    configuredModel: primaryModel,
     model: primaryModel,
     output: result.output,
     providerMetadata: result.providerMetadata,
     providerRoute,
+    responseModel: resolveResponseModel({
+      primaryModel,
+      result,
+    }),
   };
 }
 
@@ -175,10 +187,15 @@ export async function extractImageWithAi(input: {
   });
 
   return {
+    configuredModel: primaryModel,
     model: primaryModel,
     output: result.output,
     providerMetadata: result.providerMetadata,
     providerRoute,
+    responseModel: resolveResponseModel({
+      primaryModel,
+      result,
+    }),
   };
 }
 
@@ -237,9 +254,14 @@ export async function extractScannedPdfWithAi(input: {
   });
 
   return {
+    configuredModel: primaryModel,
     model: primaryModel,
     output: result.output,
     providerMetadata: result.providerMetadata,
     providerRoute,
+    responseModel: resolveResponseModel({
+      primaryModel,
+      result,
+    }),
   };
 }
