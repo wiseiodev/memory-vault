@@ -34,7 +34,7 @@
     "@types/node": "^25.5.0",
     "lefthook": "^2.1.4",
     "tsx": "^4.20.6",
-    "turbo": "^2.8.20"
+    "turbo": "^2.8.21"
   },
   "dependencies": {
     "aws-cdk-lib": "^2.245.0",

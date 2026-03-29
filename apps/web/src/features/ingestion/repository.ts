@@ -11,6 +11,7 @@ import {
   spaces,
 } from '@/db/schema';
 import type { IngestionJobListItem } from './schemas';
+import type { PersistedSegment } from './types';
 
 type Db = ReturnType<typeof getDb>;
 
@@ -46,13 +47,18 @@ export type IngestionRepository = {
   }): Promise<void>;
   getJobForProcessing(input: { jobId: string }): Promise<{
     attemptCount: number;
+    canonicalUri: string | null;
     jobId: string;
     maxAttempts: number;
     payload: Record<string, unknown>;
     sourceBlobId: string | null;
+    sourceBlobContentType: string | null;
+    sourceBlobObjectKey: string | null;
+    sourceBlobByteSize: bigint | null;
     sourceItemId: string | null;
     sourceKind: 'file' | 'note' | 'web_page' | null;
     sourceMetadata: Record<string, unknown>;
+    mimeType: string | null;
     sourceTitle: string | null;
     spaceId: string;
     stage: IngestionJobStage;
@@ -76,16 +82,13 @@ export type IngestionRepository = {
     updatedAt: Date;
   }): Promise<void>;
   replaceSegments(input: {
+    canonicalUri: string | null;
     jobId: string;
-    segments: Array<{
-      content: string;
-      contentHash: string;
-      id: string;
-      kind: 'plain_text';
-      ordinal: number;
-      tokenCount: number;
-    }>;
+    languageCode: string | null;
+    mimeType: string | null;
+    segments: PersistedSegment[];
     sourceItemId: string;
+    title: string | null;
     updatedAt: Date;
   }): Promise<void>;
   resetOwnedJobForRetry(input: {
@@ -249,10 +252,15 @@ export function createIngestionRepository(
       const [job] = await db
         .select({
           attemptCount: ingestionJobs.attemptCount,
+          canonicalUri: sourceItems.canonicalUri,
           jobId: ingestionJobs.id,
           maxAttempts: ingestionJobs.maxAttempts,
+          mimeType: sourceItems.mimeType,
           payload: ingestionJobs.payload,
+          sourceBlobContentType: sourceBlobs.contentType,
           sourceBlobId: sourceBlobs.id,
+          sourceBlobObjectKey: sourceBlobs.objectKey,
+          sourceBlobByteSize: sourceBlobs.byteSize,
           sourceItemId: ingestionJobs.sourceItemId,
           sourceKind: sourceItems.kind,
           sourceMetadata: sourceItems.metadata,
@@ -279,10 +287,15 @@ export function createIngestionRepository(
 
       return {
         attemptCount: job.attemptCount,
+        canonicalUri: job.canonicalUri,
         jobId: job.jobId,
         maxAttempts: job.maxAttempts,
+        mimeType: job.mimeType,
         payload: job.payload ?? {},
+        sourceBlobContentType: job.sourceBlobContentType,
         sourceBlobId: job.sourceBlobId ?? null,
+        sourceBlobObjectKey: job.sourceBlobObjectKey ?? null,
+        sourceBlobByteSize: job.sourceBlobByteSize ?? null,
         sourceItemId: job.sourceItemId ?? null,
         sourceKind:
           job.sourceKind === 'file' ||
@@ -402,17 +415,34 @@ export function createIngestionRepository(
           .where(eq(ingestionJobs.id, input.jobId));
 
         await tx
+          .update(sourceItems)
+          .set({
+            canonicalUri: input.canonicalUri ?? undefined,
+            languageCode: input.languageCode ?? undefined,
+            mimeType: input.mimeType ?? undefined,
+            title: input.title
+              ? sql`coalesce(${sourceItems.title}, ${input.title})`
+              : undefined,
+            updatedAt: input.updatedAt,
+          })
+          .where(eq(sourceItems.id, input.sourceItemId));
+
+        await tx
           .delete(segments)
           .where(eq(segments.sourceItemId, input.sourceItemId));
 
         if (input.segments.length > 0) {
           await tx.insert(segments).values(
             input.segments.map((segment) => ({
+              charEnd: segment.charEnd,
+              charStart: segment.charStart,
               content: segment.content,
               contentHash: segment.contentHash,
               id: segment.id,
               kind: segment.kind,
+              metadata: segment.metadata,
               ordinal: segment.ordinal,
+              sourceBlobId: segment.sourceBlobId,
               sourceItemId: input.sourceItemId,
               tokenCount: segment.tokenCount,
             })),

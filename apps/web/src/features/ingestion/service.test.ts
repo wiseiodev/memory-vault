@@ -179,12 +179,17 @@ describe('processIngestionJob', () => {
       completeJob: vi.fn(async () => undefined),
       getJobForProcessing: vi.fn(async () => ({
         attemptCount: 0,
+        canonicalUri: null,
         jobId: 'job_123',
         maxAttempts: 3,
+        mimeType: 'text/plain',
         payload: {
           sourceKind: 'note',
         },
+        sourceBlobContentType: null,
         sourceBlobId: null,
+        sourceBlobObjectKey: null,
+        sourceBlobByteSize: null,
         sourceItemId: 'src_123',
         sourceKind: 'note' as const,
         sourceMetadata: {
@@ -220,7 +225,10 @@ describe('processIngestionJob', () => {
       startedAt: new Date('2026-03-29T01:00:00.000Z'),
     });
     expect(repository.replaceSegments).toHaveBeenCalledWith({
+      canonicalUri: null,
       jobId: 'job_123',
+      languageCode: null,
+      mimeType: 'text/plain',
       segments: [
         expect.objectContaining({
           content: 'Pack charger.',
@@ -232,6 +240,7 @@ describe('processIngestionJob', () => {
         }),
       ],
       sourceItemId: 'src_123',
+      title: 'Weekend prep',
       updatedAt: new Date('2026-03-29T01:00:00.000Z'),
     });
     expect(repository.markJobStage).toHaveBeenNthCalledWith(1, {
@@ -302,19 +311,24 @@ describe('processIngestionJob', () => {
     });
   });
 
-  it('fails unsupported source kinds with an explicit extractor error', async () => {
+  it('fails extraction errors with explicit job state', async () => {
     const repository = {
       ...createRepositoryMocks(),
       failJob: vi.fn(async () => undefined),
       getJobForProcessing: vi.fn(async () => ({
         attemptCount: 0,
+        canonicalUri: null,
         jobId: 'job_123',
         maxAttempts: 3,
+        mimeType: 'application/pdf',
         payload: {
           sourceBlobId: 'blob_123',
           sourceKind: 'file',
         },
+        sourceBlobContentType: 'application/pdf',
         sourceBlobId: 'blob_123',
+        sourceBlobObjectKey: 'spaces/spc_123/blob_123/archive.pdf',
+        sourceBlobByteSize: 1024n,
         sourceItemId: 'src_123',
         sourceKind: 'file' as const,
         sourceMetadata: {},
@@ -339,16 +353,17 @@ describe('processIngestionJob', () => {
           publishJobUpdate: undefined,
           repository,
           run: async (_stepId, fn) => fn(),
+          extractSourceDocument: vi.fn(async () => {
+            throw new Error('PDF parsing exploded');
+          }),
         },
       ),
-    ).rejects.toThrow('file ingestion is not implemented yet.');
+    ).rejects.toThrow('PDF parsing exploded');
 
     expect(repository.failJob).toHaveBeenCalledWith({
-      errorCode: 'EXTRACTOR_NOT_IMPLEMENTED',
-      errorDetails: {
-        sourceKind: 'file',
-      },
-      errorMessage: 'file ingestion is not implemented yet.',
+      errorCode: 'INGESTION_UNEXPECTED_ERROR',
+      errorDetails: undefined,
+      errorMessage: 'PDF parsing exploded',
       failedAt: new Date('2026-03-29T01:00:00.000Z'),
       jobId: 'job_123',
       sourceBlobId: 'blob_123',
@@ -362,12 +377,17 @@ describe('processIngestionJob', () => {
       ...createRepositoryMocks(),
       getJobForProcessing: vi.fn(async () => ({
         attemptCount: 1,
+        canonicalUri: null,
         jobId: 'job_123',
         maxAttempts: 3,
+        mimeType: 'text/plain',
         payload: {
           sourceKind: 'note',
         },
+        sourceBlobContentType: null,
         sourceBlobId: null,
+        sourceBlobObjectKey: null,
+        sourceBlobByteSize: null,
         sourceItemId: 'src_123',
         sourceKind: 'note' as const,
         sourceMetadata: {
