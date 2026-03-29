@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from 'vitest';
 import { IngestionPipelineError } from './errors';
 import {
+  __private__,
   type ExtractSourceDocumentInput,
   extractSourceDocument,
 } from './extraction';
@@ -144,6 +145,7 @@ describe('extractSourceDocument', () => {
       }),
     );
     deps.extractHardWebPageWithAi.mockResolvedValue({
+      configuredModel: 'google/gemini-3.1-pro-preview',
       model: 'google/gemini-3.1-pro-preview',
       output: {
         confidence: 0.86,
@@ -163,6 +165,7 @@ describe('extractSourceDocument', () => {
         'openai/gpt-5',
         'anthropic/claude-sonnet-4.6',
       ],
+      responseModel: 'google/gemini-3.1-pro-preview',
     });
 
     const document = await extractSourceDocument(
@@ -175,8 +178,12 @@ describe('extractSourceDocument', () => {
 
     expect(document.title).toBe('Fallback article');
     expect(document.metadata).toMatchObject({
+      configuredPrimaryModel: 'google/gemini-3.1-pro-preview',
       extractionStrategy: 'gateway_fallback',
       fallbackReason: 'low_text_yield',
+      providerFallbackUsed: false,
+      responseModel: 'google/gemini-3.1-pro-preview',
+      responseProvider: 'google',
     });
     expect(document.blocks[0]).toMatchObject({
       content: 'Recovered article body from the fallback extractor.',
@@ -352,6 +359,7 @@ describe('extractSourceDocument', () => {
       totalPages: 1,
     });
     deps.extractScannedPdfWithAi.mockResolvedValue({
+      configuredModel: 'google/gemini-3-flash',
       model: 'google/gemini-3-flash',
       output: {
         confidence: 0.72,
@@ -371,6 +379,7 @@ describe('extractSourceDocument', () => {
         'openai/gpt-5-mini',
         'anthropic/claude-sonnet-4.6',
       ],
+      responseModel: 'openai/gpt-5-mini',
     });
 
     const document = await extractSourceDocument(
@@ -385,12 +394,79 @@ describe('extractSourceDocument', () => {
     );
 
     expect(document.metadata).toMatchObject({
+      configuredPrimaryModel: 'google/gemini-3-flash',
       extractionStrategy: 'gateway_fallback',
       fallbackReason: 'scanned_pdf',
+      providerFallbackUsed: true,
+      responseModel: 'openai/gpt-5-mini',
+      responseProvider: 'openai',
     });
     expect(document.blocks[0]).toMatchObject({
       kind: 'ocr',
+      metadata: expect.objectContaining({
+        configuredProviderRoute: [
+          'google/gemini-3-flash',
+          'openai/gpt-5-mini',
+          'anthropic/claude-sonnet-4.6',
+        ],
+        providerRouteType: 'configured_fallback_order',
+      }),
     });
+  });
+
+  it('preserves the original PDF bytes for OCR fallback if deterministic parsing detaches its buffer', async () => {
+    const deps = createDeps();
+    const originalBytes = new Uint8Array([1, 2, 3, 4]);
+    deps.readObjectBytes.mockResolvedValue(originalBytes);
+    deps.extractPdfPages.mockImplementation(async ({ bytes }) => {
+      structuredClone(bytes, {
+        transfer: [bytes.buffer],
+      });
+
+      return {
+        imageOnlyPageCount: 1,
+        pages: [],
+        totalPages: 1,
+      };
+    });
+    deps.extractScannedPdfWithAi.mockImplementation(async ({ bytes }) => {
+      expect(Array.from(bytes)).toEqual([1, 2, 3, 4]);
+
+      return {
+        model: 'google/gemini-3-flash',
+        output: {
+          confidence: 0.72,
+          languageCode: 'en',
+          pages: [
+            {
+              content: 'OCR page one text.',
+              pageNumber: 1,
+            },
+          ],
+          reason: 'No embedded PDF text was available.',
+          title: 'Scanned note',
+        },
+        providerMetadata: {},
+        providerRoute: [
+          'google/gemini-3-flash',
+          'openai/gpt-5-mini',
+          'anthropic/claude-sonnet-4.6',
+        ],
+      };
+    });
+
+    await extractSourceDocument(
+      createJob({
+        mimeType: 'application/pdf',
+        sourceBlobId: 'blob_123',
+        sourceBlobObjectKey: 'spaces/spc_123/scanned.pdf',
+        sourceKind: 'file',
+        sourceTitle: 'scanned.pdf',
+      }),
+      deps,
+    );
+
+    expect(deps.extractScannedPdfWithAi).toHaveBeenCalledOnce();
   });
 
   it('falls back to AI OCR when a PDF has image-only pages mixed with text pages', async () => {
@@ -482,6 +558,54 @@ describe('extractSourceDocument', () => {
       imageOnlyPageCount: 0,
     });
     expect(deps.extractScannedPdfWithAi).not.toHaveBeenCalled();
+  });
+
+  it('preloads the pdfjs worker module for server-side PDF extraction', async () => {
+    vi.resetModules();
+    vi.doMock('pdfjs-dist/legacy/build/pdf.worker.mjs', () => ({
+      WorkerMessageHandler: { setup: vi.fn() },
+    }));
+    vi.doMock('pdfjs-dist/legacy/build/pdf.mjs', () => ({
+      OPS: {
+        paintImageMaskXObject: 4,
+        paintImageMaskXObjectGroup: 5,
+        paintImageMaskXObjectRepeat: 7,
+        paintImageXObject: 1,
+        paintImageXObjectRepeat: 6,
+        paintInlineImageXObject: 2,
+        paintInlineImageXObjectGroup: 3,
+        paintSolidColorImageMask: 8,
+      },
+      getDocument: vi.fn(() => ({
+        promise: Promise.resolve({
+          getPage: vi.fn(async () => ({
+            getOperatorList: vi.fn(async () => ({ fnArray: [] })),
+            getTextContent: vi.fn(async () => ({
+              items: [{ str: 'Server-safe PDF text.' }],
+            })),
+          })),
+          numPages: 1,
+        }),
+      })),
+    }));
+
+    const extraction = await __private__.defaultExtractPdfPages({
+      bytes: new Uint8Array([1, 2, 3]),
+    });
+    const globalPdfJsWorker = globalThis as typeof globalThis & {
+      pdfjsWorker?: { WorkerMessageHandler?: unknown };
+    };
+
+    expect(extraction.pages).toEqual([
+      {
+        content: 'Server-safe PDF text.',
+        pageNumber: 1,
+      },
+    ]);
+    expect(globalPdfJsWorker.pdfjsWorker?.WorkerMessageHandler).toBeDefined();
+
+    vi.doUnmock('pdfjs-dist/legacy/build/pdf.mjs');
+    vi.doUnmock('pdfjs-dist/legacy/build/pdf.worker.mjs');
   });
 
   it('uses AI OCR for images', async () => {

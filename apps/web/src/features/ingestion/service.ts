@@ -3,6 +3,7 @@ import 'server-only';
 import { createHash } from 'node:crypto';
 import { ORPCError } from '@orpc/server';
 import { generateId } from '@/db/columns/id';
+import { embedSegmentsForSourceItem } from '@/features/retrieval/service';
 import { inngest } from '@/inngest/client';
 import { createIngestionJobRequestedEvent } from '@/inngest/events';
 import {
@@ -45,6 +46,7 @@ type RealtimeJobUpdate = {
 };
 
 type ProcessDeps = {
+  embedSegmentsForSourceItem?: typeof embedSegmentsForSourceItem;
   loadJobRealtimeTarget?: (input: {
     jobId: string;
     stepId: string;
@@ -253,6 +255,7 @@ export async function retryIngestionJob(
 export async function processIngestionJob(
   input: { jobId: string },
   deps: ProcessDeps = {
+    embedSegmentsForSourceItem,
     loadJobRealtimeTarget: undefined,
     now: () => new Date(),
     publishJobUpdate: undefined,
@@ -392,6 +395,12 @@ export async function processIngestionJob(
     await publishRealtimeUpdate(
       'load-embed-job-update',
       'publish-embed-job-update',
+    );
+    await deps.run('embed-source-item-segments', async () =>
+      (deps.embedSegmentsForSourceItem ?? embedSegmentsForSourceItem)({
+        embeddedAt: deps.now(),
+        sourceItemId,
+      }),
     );
 
     currentStage = 'promote';

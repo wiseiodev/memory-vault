@@ -76,8 +76,9 @@ already running locally so `http://localhost:3000/api/inngest` is reachable.
 - File uploads and URL captures enter the same durable ingestion pipeline
 - File and URL jobs currently fail intentionally with
   `EXTRACTOR_NOT_IMPLEMENTED`
-- Real extraction/chunking follow-up work is tracked in `LAB-120`
-- Embeddings/indexing follow-up work is tracked in `LAB-121`
+- Real extraction/chunking shipped in `LAB-120`
+- Segment embeddings and raw retrieval primitives ship in `LAB-121`
+- Fusion, reranking, and citation assembly remain follow-up work in `LAB-122`
 
 ## Notes
 

@@ -11,7 +11,7 @@ export function IngestionJobsCard({
   onRetryQueued,
 }: IngestionJobsCardProps) {
   return (
-    <article className='rounded-3xl border border-slate-200/80 bg-white/90 p-5'>
+    <article className='min-w-0 rounded-3xl border border-slate-200/80 bg-white/90 p-5'>
       <div className='space-y-2'>
         <h3 className='text-sm font-semibold uppercase tracking-[0.18em] text-slate-500'>
           LAB-119 ingestion jobs
@@ -32,9 +32,9 @@ export function IngestionJobsCard({
           {jobs.map((job) => (
             <div
               key={job.jobId}
-              className='grid gap-4 rounded-2xl border border-slate-200/80 bg-slate-50/80 p-4 md:grid-cols-[1.4fr_0.8fr]'
+              className='grid gap-4 rounded-2xl border border-slate-200/80 bg-slate-50/80 p-4 md:grid-cols-[minmax(0,1.4fr)_minmax(0,0.8fr)]'
             >
-              <div className='space-y-3'>
+              <div className='min-w-0 space-y-3'>
                 <div className='flex flex-wrap items-center gap-2'>
                   <span className='inline-flex rounded-full border border-slate-200 bg-white px-3 py-1 text-[11px] font-semibold uppercase tracking-[0.16em] text-slate-600'>
                     {job.sourceKind ?? 'unknown source'}
@@ -100,12 +100,14 @@ export function IngestionJobsCard({
                     <p className='font-semibold'>
                       {job.errorCode ?? 'INGESTION_ERROR'}
                     </p>
-                    <p className='mt-1'>{job.errorMessage}</p>
+                    <p className='mt-1 max-h-56 overflow-auto whitespace-pre-wrap break-words pr-2 font-mono text-xs leading-6 [overflow-wrap:anywhere]'>
+                      {job.errorMessage}
+                    </p>
                   </div>
                 ) : null}
               </div>
 
-              <div className='flex items-start justify-end'>
+              <div className='min-w-0 flex items-start justify-end'>
                 {job.status === 'failed' ? (
                   <RetryIngestionJobButton
                     jobId={job.jobId}

@@ -76,6 +76,11 @@ describe('buildNoteSegments', () => {
 
 describe('processIngestionJob', () => {
   it('processes note captures end to end and marks stage boundaries', async () => {
+    const embedSegmentsForSourceItem = vi.fn(async () => ({
+      embeddedCount: 2,
+      model: 'google/gemini-embedding-2',
+      sourceItemId: 'src_123',
+    }));
     const loadJobRealtimeTarget = vi
       .fn()
       .mockResolvedValueOnce({
@@ -217,6 +222,7 @@ describe('processIngestionJob', () => {
         publishJobUpdate,
         repository,
         run: async (_stepId, fn) => fn(),
+        embedSegmentsForSourceItem,
       },
     );
 
@@ -252,6 +258,10 @@ describe('processIngestionJob', () => {
       jobId: 'job_123',
       stage: 'promote',
       updatedAt: new Date('2026-03-29T01:00:00.000Z'),
+    });
+    expect(embedSegmentsForSourceItem).toHaveBeenCalledWith({
+      embeddedAt: new Date('2026-03-29T01:00:00.000Z'),
+      sourceItemId: 'src_123',
     });
     expect(repository.completeJob).toHaveBeenCalledWith({
       finishedAt: new Date('2026-03-29T01:00:00.000Z'),
@@ -311,6 +321,70 @@ describe('processIngestionJob', () => {
     });
   });
 
+  it('fails embedding errors with explicit embed-stage job state', async () => {
+    const repository = {
+      ...createRepositoryMocks(),
+      failJob: vi.fn(async () => undefined),
+      getJobForProcessing: vi.fn(async () => ({
+        attemptCount: 0,
+        canonicalUri: null,
+        jobId: 'job_123',
+        maxAttempts: 3,
+        mimeType: 'text/plain',
+        payload: {
+          sourceKind: 'note',
+        },
+        sourceBlobContentType: null,
+        sourceBlobId: null,
+        sourceBlobObjectKey: null,
+        sourceBlobByteSize: null,
+        sourceItemId: 'src_123',
+        sourceKind: 'note' as const,
+        sourceMetadata: {
+          noteBody: 'Pack charger.\n\nBook dog sitter.',
+        },
+        sourceTitle: 'Weekend prep',
+        spaceId: 'spc_123',
+        stage: 'extract' as const,
+        status: 'queued' as const,
+      })),
+      markJobStage: vi.fn(async () => undefined),
+      replaceSegments: vi.fn(async () => undefined),
+      startJob: vi.fn(async () => ({
+        jobId: 'job_123',
+        sourceBlobId: null,
+        sourceItemId: 'src_123',
+      })),
+    };
+
+    await expect(
+      processIngestionJob(
+        { jobId: 'job_123' },
+        {
+          embedSegmentsForSourceItem: vi.fn(async () => {
+            throw new Error('Embedding provider unavailable');
+          }),
+          loadJobRealtimeTarget: undefined,
+          now: () => new Date('2026-03-29T01:00:00.000Z'),
+          publishJobUpdate: undefined,
+          repository,
+          run: async (_stepId, fn) => fn(),
+        },
+      ),
+    ).rejects.toThrow('Embedding provider unavailable');
+
+    expect(repository.failJob).toHaveBeenCalledWith({
+      errorCode: 'INGESTION_UNEXPECTED_ERROR',
+      errorDetails: undefined,
+      errorMessage: 'Embedding provider unavailable',
+      failedAt: new Date('2026-03-29T01:00:00.000Z'),
+      jobId: 'job_123',
+      sourceBlobId: null,
+      sourceItemId: 'src_123',
+      stage: 'embed',
+    });
+  });
+
   it('fails extraction errors with explicit job state', async () => {
     const repository = {
       ...createRepositoryMocks(),
@@ -353,6 +427,7 @@ describe('processIngestionJob', () => {
           publishJobUpdate: undefined,
           repository,
           run: async (_stepId, fn) => fn(),
+          embedSegmentsForSourceItem: vi.fn(),
           extractSourceDocument: vi.fn(async () => {
             throw new Error('PDF parsing exploded');
           }),
@@ -409,6 +484,7 @@ describe('processIngestionJob', () => {
         publishJobUpdate: undefined,
         repository,
         run: async (_stepId, fn) => fn(),
+        embedSegmentsForSourceItem: vi.fn(),
       },
     );
 
