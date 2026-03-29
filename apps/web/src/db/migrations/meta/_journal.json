@@ -15,6 +15,13 @@
       "when": 1774682476686,
       "tag": "0001_amusing_exodus",
       "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "7",
+      "when": 1774747987526,
+      "tag": "0002_lyrical_celestials",
+      "breakpoints": true
     }
   ]
 }

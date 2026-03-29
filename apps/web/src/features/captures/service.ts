@@ -1,6 +1,10 @@
 import 'server-only';
 
 import { generateId } from '@/db/columns/id';
+import {
+  DEFAULT_INGESTION_MAX_ATTEMPTS,
+  dispatchIngestionJobForRequest,
+} from '@/features/ingestion/service';
 import { createSpaceRepository, type SpaceRepository } from '@/features/spaces';
 import { completeUpload } from '@/features/uploads/service';
 import { type CaptureRepository, createCaptureRepository } from './repository';
@@ -11,12 +15,14 @@ type OwnedSpaceRepository = Pick<
 >;
 
 type CreateCaptureDeps = {
+  dispatchIngestionJob: typeof dispatchIngestionJobForRequest;
   now: () => Date;
   repository: CaptureRepository;
   spaceRepository: OwnedSpaceRepository;
 };
 
 type FinalizeUploadDeps = {
+  dispatchIngestionJob: typeof dispatchIngestionJobForRequest;
   completeUpload: typeof completeUpload;
 };
 
@@ -82,6 +88,7 @@ async function resolveCaptureSpace(input: {
 export async function createNoteCapture(
   input: NoteCaptureInput,
   deps: CreateCaptureDeps = {
+    dispatchIngestionJob: dispatchIngestionJobForRequest,
     now: () => new Date(),
     repository: createCaptureRepository(),
     spaceRepository: createSpaceRepository(),
@@ -93,10 +100,18 @@ export async function createNoteCapture(
     userId: input.userId,
   });
   const sourceItemId = generateId('src');
+  const jobId = generateId('job');
 
-  return deps.repository.createCapture({
+  const createdCapture = await deps.repository.createCapture({
     canonicalUri: null,
     capturedAt: deps.now(),
+    ingestionJob: {
+      id: jobId,
+      maxAttempts: DEFAULT_INGESTION_MAX_ATTEMPTS,
+      payload: {
+        sourceKind: 'note',
+      },
+    },
     kind: 'note',
     metadata: {
       noteBody: input.body,
@@ -106,11 +121,25 @@ export async function createNoteCapture(
     title: input.title ?? null,
     userId: input.userId,
   });
+
+  await deps.dispatchIngestionJob({
+    jobId: createdCapture.jobId,
+    sourceItemId: createdCapture.sourceItemId,
+  });
+
+  return {
+    capturedAt: createdCapture.capturedAt,
+    kind: createdCapture.kind,
+    sourceItemId: createdCapture.sourceItemId,
+    spaceId: createdCapture.spaceId,
+    status: createdCapture.status,
+  };
 }
 
 export async function createUrlCapture(
   input: UrlCaptureInput,
   deps: CreateCaptureDeps = {
+    dispatchIngestionJob: dispatchIngestionJobForRequest,
     now: () => new Date(),
     repository: createCaptureRepository(),
     spaceRepository: createSpaceRepository(),
@@ -122,10 +151,18 @@ export async function createUrlCapture(
     userId: input.userId,
   });
   const sourceItemId = generateId('src');
+  const jobId = generateId('job');
 
-  return deps.repository.createCapture({
+  const createdCapture = await deps.repository.createCapture({
     canonicalUri: input.url,
     capturedAt: deps.now(),
+    ingestionJob: {
+      id: jobId,
+      maxAttempts: DEFAULT_INGESTION_MAX_ATTEMPTS,
+      payload: {
+        sourceKind: 'web_page',
+      },
+    },
     kind: 'web_page',
     metadata: {
       submittedUrl: input.url,
@@ -135,11 +172,25 @@ export async function createUrlCapture(
     title: input.title ?? null,
     userId: input.userId,
   });
+
+  await deps.dispatchIngestionJob({
+    jobId: createdCapture.jobId,
+    sourceItemId: createdCapture.sourceItemId,
+  });
+
+  return {
+    capturedAt: createdCapture.capturedAt,
+    kind: createdCapture.kind,
+    sourceItemId: createdCapture.sourceItemId,
+    spaceId: createdCapture.spaceId,
+    status: createdCapture.status,
+  };
 }
 
 export async function finalizeUploadCapture(
   input: FinalizeUploadInput,
   deps: FinalizeUploadDeps = {
+    dispatchIngestionJob: dispatchIngestionJobForRequest,
     completeUpload,
   },
 ): Promise<CaptureSummary> {
@@ -148,6 +199,11 @@ export async function finalizeUploadCapture(
   if (!completedUpload.uploadedAt) {
     throw new Error('completeUpload did not return an uploadedAt timestamp');
   }
+
+  await deps.dispatchIngestionJob({
+    jobId: completedUpload.ingestionJobId,
+    sourceItemId: completedUpload.sourceItemId,
+  });
 
   return {
     capturedAt: completedUpload.uploadedAt,

@@ -2,6 +2,7 @@ import 'server-only';
 
 import { ORPCError } from '@orpc/server';
 import { generateId } from '@/db/columns/id';
+import { DEFAULT_INGESTION_MAX_ATTEMPTS } from '@/features/ingestion/service';
 import { createSpaceRepository } from '@/features/spaces';
 import { getRequestLogger } from '@/lib/evlog';
 import { buildSourceBlobObjectKey } from './object-key';
@@ -178,10 +179,19 @@ export async function completeUpload(
   }
 
   const completedAt = deps.now();
+  const ingestionJobId = generateId('job');
   const updatedBlob = await deps.repository.finalizeOwnedUpload({
     byteSize: headedObject.byteSize,
     contentType: headedObject.contentType,
     etag: headedObject.etag,
+    ingestionJob: {
+      id: ingestionJobId,
+      maxAttempts: DEFAULT_INGESTION_MAX_ATTEMPTS,
+      payload: {
+        sourceBlobId: input.sourceBlobId,
+        sourceKind: 'file',
+      },
+    },
     sourceBlobId: input.sourceBlobId,
     sourceItemId: input.sourceItemId,
     uploadedAt: completedAt,
@@ -199,6 +209,7 @@ export async function completeUpload(
     byteSize: updatedBlob.byteSize?.toString() ?? null,
     contentType: updatedBlob.contentType,
     etag: updatedBlob.etag,
+    ingestionJobId: updatedBlob.ingestionJobId,
     objectKey: updatedBlob.objectKey,
     sourceBlobId: updatedBlob.sourceBlobId,
     sourceItemId: updatedBlob.sourceItemId,

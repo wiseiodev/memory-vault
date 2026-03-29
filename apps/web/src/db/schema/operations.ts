@@ -35,6 +35,14 @@ export const jobStatus = pgEnum('job_status', [
   'canceled',
 ]);
 
+export const ingestionStage = pgEnum('ingestion_stage', [
+  'extract',
+  'segment',
+  'embed',
+  'promote',
+  'complete',
+]);
+
 export const devicePlatform = pgEnum('device_platform', ['chrome_extension']);
 
 export const cursorStatus = pgEnum('cursor_status', [
@@ -60,6 +68,7 @@ export const ingestionJobs = pgTable(
       onDelete: 'set null',
     }),
     kind: ingestionJobKind('kind').notNull(),
+    stage: ingestionStage('stage').default('extract').notNull(),
     status: jobStatus('status').default('queued').notNull(),
     connectorKey: text('connector_key'),
     attemptCount: integer('attempt_count').default(0).notNull(),
@@ -80,6 +89,7 @@ export const ingestionJobs = pgTable(
     index('ing_jobs_space_status_idx').on(table.spaceId, table.status),
     index('ing_jobs_source_item_idx').on(table.sourceItemId),
     index('ing_jobs_kind_status_idx').on(table.kind, table.status),
+    index('ing_jobs_stage_status_idx').on(table.stage, table.status),
     index('ing_jobs_created_idx').on(table.createdAt),
   ],
 );
