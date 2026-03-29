@@ -1,11 +1,15 @@
-import type { IngestionJobListItem } from '../schemas';
+import type { IngestionJobListItem, RetryIngestionJobResult } from '../schemas';
 import { RetryIngestionJobButton } from './retry-ingestion-job-button';
 
 type IngestionJobsCardProps = {
   jobs: IngestionJobListItem[];
+  onRetryQueued?: (result: RetryIngestionJobResult) => void;
 };
 
-export function IngestionJobsCard({ jobs }: IngestionJobsCardProps) {
+export function IngestionJobsCard({
+  jobs,
+  onRetryQueued,
+}: IngestionJobsCardProps) {
   return (
     <article className='rounded-3xl border border-slate-200/80 bg-white/90 p-5'>
       <div className='space-y-2'>
@@ -103,7 +107,10 @@ export function IngestionJobsCard({ jobs }: IngestionJobsCardProps) {
 
               <div className='flex items-start justify-end'>
                 {job.status === 'failed' ? (
-                  <RetryIngestionJobButton jobId={job.jobId} />
+                  <RetryIngestionJobButton
+                    jobId={job.jobId}
+                    onRetried={onRetryQueued}
+                  />
                 ) : (
                   <div className='rounded-full border border-slate-200 bg-white px-3 py-2 text-xs font-semibold uppercase tracking-[0.14em] text-slate-500'>
                     {job.status === 'succeeded' ? 'Finished' : 'Watching'}

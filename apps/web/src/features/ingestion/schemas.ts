@@ -46,3 +46,4 @@ export const ingestionJobListItem = z.object({
 export const listRecentIngestionJobsOutput = z.array(ingestionJobListItem);
 
 export type IngestionJobListItem = z.infer<typeof ingestionJobListItem>;
+export type RetryIngestionJobResult = z.infer<typeof retryIngestionJobOutput>;

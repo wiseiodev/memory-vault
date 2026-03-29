@@ -1,4 +1,4 @@
-import { describe, expect, it, vi } from 'vitest';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 vi.mock('@/db/columns/id', () => ({
   generateId: vi.fn((prefix: string) => `${prefix}_123`),
@@ -29,6 +29,7 @@ function createRepositoryMocks() {
     failJob: vi.fn(),
     getJobForDispatch: vi.fn(),
     getJobForProcessing: vi.fn(),
+    getJobRealtimeTarget: vi.fn(),
     listOwnedRecentJobs: vi.fn(),
     markJobStage: vi.fn(),
     replaceSegments: vi.fn(),
@@ -36,6 +37,10 @@ function createRepositoryMocks() {
     startJob: vi.fn(),
   };
 }
+
+beforeEach(() => {
+  vi.clearAllMocks();
+});
 
 describe('buildNoteSegments', () => {
   it('splits notes into deterministic paragraph segments', () => {
@@ -71,6 +76,104 @@ describe('buildNoteSegments', () => {
 
 describe('processIngestionJob', () => {
   it('processes note captures end to end and marks stage boundaries', async () => {
+    const loadJobRealtimeTarget = vi
+      .fn()
+      .mockResolvedValueOnce({
+        job: {
+          attemptCount: 1,
+          createdAt: '2026-03-29T01:00:00.000Z',
+          errorCode: null,
+          errorMessage: null,
+          finishedAt: null,
+          jobId: 'job_123',
+          kind: 'ingest' as const,
+          maxAttempts: 3,
+          sourceItemId: 'src_123',
+          sourceKind: 'note' as const,
+          sourceTitle: 'Weekend prep',
+          stage: 'extract' as const,
+          status: 'running' as const,
+          updatedAt: '2026-03-29T01:00:00.000Z',
+        },
+        userId: 'user_123',
+      })
+      .mockResolvedValueOnce({
+        job: {
+          attemptCount: 1,
+          createdAt: '2026-03-29T01:00:00.000Z',
+          errorCode: null,
+          errorMessage: null,
+          finishedAt: null,
+          jobId: 'job_123',
+          kind: 'ingest' as const,
+          maxAttempts: 3,
+          sourceItemId: 'src_123',
+          sourceKind: 'note' as const,
+          sourceTitle: 'Weekend prep',
+          stage: 'segment' as const,
+          status: 'running' as const,
+          updatedAt: '2026-03-29T01:00:00.000Z',
+        },
+        userId: 'user_123',
+      })
+      .mockResolvedValueOnce({
+        job: {
+          attemptCount: 1,
+          createdAt: '2026-03-29T01:00:00.000Z',
+          errorCode: null,
+          errorMessage: null,
+          finishedAt: null,
+          jobId: 'job_123',
+          kind: 'ingest' as const,
+          maxAttempts: 3,
+          sourceItemId: 'src_123',
+          sourceKind: 'note' as const,
+          sourceTitle: 'Weekend prep',
+          stage: 'embed' as const,
+          status: 'running' as const,
+          updatedAt: '2026-03-29T01:00:00.000Z',
+        },
+        userId: 'user_123',
+      })
+      .mockResolvedValueOnce({
+        job: {
+          attemptCount: 1,
+          createdAt: '2026-03-29T01:00:00.000Z',
+          errorCode: null,
+          errorMessage: null,
+          finishedAt: null,
+          jobId: 'job_123',
+          kind: 'ingest' as const,
+          maxAttempts: 3,
+          sourceItemId: 'src_123',
+          sourceKind: 'note' as const,
+          sourceTitle: 'Weekend prep',
+          stage: 'promote' as const,
+          status: 'running' as const,
+          updatedAt: '2026-03-29T01:00:00.000Z',
+        },
+        userId: 'user_123',
+      })
+      .mockResolvedValueOnce({
+        job: {
+          attemptCount: 1,
+          createdAt: '2026-03-29T01:00:00.000Z',
+          errorCode: null,
+          errorMessage: null,
+          finishedAt: '2026-03-29T01:00:00.000Z',
+          jobId: 'job_123',
+          kind: 'ingest' as const,
+          maxAttempts: 3,
+          sourceItemId: 'src_123',
+          sourceKind: 'note' as const,
+          sourceTitle: 'Weekend prep',
+          stage: 'complete' as const,
+          status: 'succeeded' as const,
+          updatedAt: '2026-03-29T01:00:00.000Z',
+        },
+        userId: 'user_123',
+      });
+    const publishJobUpdate = vi.fn(async () => undefined);
     const repository = {
       ...createRepositoryMocks(),
       completeJob: vi.fn(async () => undefined),
@@ -104,8 +207,11 @@ describe('processIngestionJob', () => {
     const result = await processIngestionJob(
       { jobId: 'job_123' },
       {
+        loadJobRealtimeTarget,
         now: () => new Date('2026-03-29T01:00:00.000Z'),
+        publishJobUpdate,
         repository,
+        run: async (_stepId, fn) => fn(),
       },
     );
 
@@ -142,6 +248,52 @@ describe('processIngestionJob', () => {
       finishedAt: new Date('2026-03-29T01:00:00.000Z'),
       jobId: 'job_123',
       sourceItemId: 'src_123',
+    });
+    expect(publishJobUpdate).toHaveBeenNthCalledWith(1, {
+      stepId: 'publish-running-job-update',
+      update: expect.objectContaining({
+        job: expect.objectContaining({
+          stage: 'extract',
+          status: 'running',
+        }),
+        userId: 'user_123',
+      }),
+    });
+    expect(publishJobUpdate).toHaveBeenNthCalledWith(2, {
+      stepId: 'publish-segment-job-update',
+      update: expect.objectContaining({
+        job: expect.objectContaining({
+          stage: 'segment',
+          status: 'running',
+        }),
+      }),
+    });
+    expect(publishJobUpdate).toHaveBeenNthCalledWith(3, {
+      stepId: 'publish-embed-job-update',
+      update: expect.objectContaining({
+        job: expect.objectContaining({
+          stage: 'embed',
+          status: 'running',
+        }),
+      }),
+    });
+    expect(publishJobUpdate).toHaveBeenNthCalledWith(4, {
+      stepId: 'publish-promote-job-update',
+      update: expect.objectContaining({
+        job: expect.objectContaining({
+          stage: 'promote',
+          status: 'running',
+        }),
+      }),
+    });
+    expect(publishJobUpdate).toHaveBeenNthCalledWith(5, {
+      stepId: 'publish-complete-job-update',
+      update: expect.objectContaining({
+        job: expect.objectContaining({
+          stage: 'complete',
+          status: 'succeeded',
+        }),
+      }),
     });
     expect(result).toEqual({
       jobId: 'job_123',
@@ -182,8 +334,11 @@ describe('processIngestionJob', () => {
       processIngestionJob(
         { jobId: 'job_123' },
         {
+          loadJobRealtimeTarget: undefined,
           now: () => new Date('2026-03-29T01:00:00.000Z'),
+          publishJobUpdate: undefined,
           repository,
+          run: async (_stepId, fn) => fn(),
         },
       ),
     ).rejects.toThrow('file ingestion is not implemented yet.');
@@ -229,8 +384,11 @@ describe('processIngestionJob', () => {
     const result = await processIngestionJob(
       { jobId: 'job_123' },
       {
+        loadJobRealtimeTarget: undefined,
         now: () => new Date('2026-03-29T01:00:00.000Z'),
+        publishJobUpdate: undefined,
         repository,
+        run: async (_stepId, fn) => fn(),
       },
     );
 
@@ -270,6 +428,7 @@ describe('retryIngestionJob', () => {
       {
         dispatchIngestionJob,
         now: () => new Date('2026-03-29T01:00:00.000Z'),
+        publishJobUpdate: vi.fn(async () => null),
         repository,
       },
     );
@@ -311,6 +470,7 @@ describe('retryIngestionJob', () => {
           throw new Error('dev server unavailable');
         }),
         now: () => new Date('2026-03-29T01:00:00.000Z'),
+        publishJobUpdate: vi.fn(async () => null),
         repository,
       },
     );
@@ -353,6 +513,7 @@ describe('retryIngestionJob', () => {
             ids: ['evt_123'],
           })),
           now: () => new Date('2026-03-29T01:00:00.000Z'),
+          publishJobUpdate: vi.fn(async () => null),
           repository,
         },
       ),
@@ -388,6 +549,7 @@ describe('retryIngestionJob', () => {
             ids: ['evt_123'],
           })),
           now: () => new Date('2026-03-29T01:00:00.000Z'),
+          publishJobUpdate: vi.fn(async () => null),
           repository,
         },
       ),
@@ -420,12 +582,14 @@ describe('dispatchIngestionJob', () => {
       },
     );
 
-    expect(send).toHaveBeenCalledWith({
-      data: {
-        jobId: 'job_123',
-      },
-      id: 'ingestion-job-requested:job_123:attempt:3',
-      name: 'app/ingestion.job.requested',
-    });
+    expect(send).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: {
+          jobId: 'job_123',
+        },
+        id: 'ingestion-job-requested:job_123:attempt:3',
+        name: 'app/ingestion.job.requested',
+      }),
+    );
   });
 });

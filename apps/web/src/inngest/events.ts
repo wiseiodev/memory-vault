@@ -1,25 +1,34 @@
+import { eventType } from 'inngest';
 import { z } from 'zod';
 
-export const inngestSetupPingEventName = 'app/inngest.setup.ping';
-export const ingestionJobRequestedEventName = 'app/ingestion.job.requested';
-
-export const inngestSetupPingData = z.object({
-  message: z.string().min(1),
-  requestedAt: z.string().datetime().optional(),
+export const inngestSetupPingEvent = eventType('app/inngest.setup.ping', {
+  schema: z.object({
+    message: z.string().min(1),
+    requestedAt: z.string().datetime().optional(),
+  }),
 });
+
+export const ingestionJobRequestedEvent = eventType(
+  'app/ingestion.job.requested',
+  {
+    schema: z.object({
+      jobId: z.string().min(1),
+    }),
+  },
+);
+
+export const inngestSetupPingEventName = inngestSetupPingEvent.name;
+export const ingestionJobRequestedEventName = ingestionJobRequestedEvent.name;
+
+export const inngestSetupPingData = inngestSetupPingEvent.schema;
 
 export type InngestSetupPingData = z.infer<typeof inngestSetupPingData>;
 
 export function createInngestSetupPingEvent(data: InngestSetupPingData) {
-  return {
-    data: inngestSetupPingData.parse(data),
-    name: inngestSetupPingEventName,
-  };
+  return inngestSetupPingEvent.create(data);
 }
 
-export const ingestionJobRequestedData = z.object({
-  jobId: z.string().min(1),
-});
+export const ingestionJobRequestedData = ingestionJobRequestedEvent.schema;
 
 export type IngestionJobRequestedData = z.infer<
   typeof ingestionJobRequestedData
@@ -28,11 +37,12 @@ export type IngestionJobRequestedData = z.infer<
 export function createIngestionJobRequestedEvent(
   input: IngestionJobRequestedData & { id: string },
 ) {
-  return {
-    data: ingestionJobRequestedData.parse({
+  return ingestionJobRequestedEvent.create(
+    {
       jobId: input.jobId,
-    }),
-    id: input.id,
-    name: ingestionJobRequestedEventName,
-  };
+    },
+    {
+      id: input.id,
+    },
+  );
 }

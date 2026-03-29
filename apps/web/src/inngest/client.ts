@@ -10,6 +10,9 @@ export function createInngestClientOptions(env: InngestEnv = process.env) {
     env.INNGEST_SIGNING_KEY_FALLBACK?.trim() || undefined;
 
   return {
+    checkpointing: {
+      maxRuntime: '240s',
+    },
     id: 'memory-vault-web',
     ...(baseUrl ? { baseUrl } : {}),
     ...(env.INNGEST_DEV === '1' ? { isDev: true as const } : {}),

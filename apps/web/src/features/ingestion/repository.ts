@@ -10,6 +10,7 @@ import {
   sourceItems,
   spaces,
 } from '@/db/schema';
+import type { IngestionJobListItem } from './schemas';
 
 type Db = ReturnType<typeof getDb>;
 
@@ -61,24 +62,14 @@ export type IngestionRepository = {
     attemptCount: number;
     jobId: string;
   } | null>;
-  listOwnedRecentJobs(input: { limit: number; userId: string }): Promise<
-    Array<{
-      attemptCount: number;
-      createdAt: string;
-      errorCode: string | null;
-      errorMessage: string | null;
-      finishedAt: string | null;
-      jobId: string;
-      kind: 'embed' | 'evaluate' | 'extract' | 'ingest' | 'segment' | 'sync';
-      maxAttempts: number;
-      sourceItemId: string | null;
-      sourceKind: 'file' | 'note' | 'web_page' | null;
-      sourceTitle: string | null;
-      stage: IngestionJobStage;
-      status: 'canceled' | 'failed' | 'queued' | 'running' | 'succeeded';
-      updatedAt: string;
-    }>
-  >;
+  getJobRealtimeTarget(input: { jobId: string }): Promise<{
+    job: IngestionJobListItem;
+    userId: string;
+  } | null>;
+  listOwnedRecentJobs(input: {
+    limit: number;
+    userId: string;
+  }): Promise<IngestionJobListItem[]>;
   markJobStage(input: {
     jobId: string;
     stage: IngestionJobStage;
@@ -120,6 +111,45 @@ export type IngestionRepository = {
 export function createIngestionRepository(
   db: Db = getDb(),
 ): IngestionRepository {
+  function toIngestionJobListItem(job: {
+    attemptCount: number;
+    createdAt: Date;
+    errorCode: string | null;
+    errorMessage: string | null;
+    finishedAt: Date | null;
+    jobId: string;
+    kind: 'embed' | 'evaluate' | 'extract' | 'ingest' | 'segment' | 'sync';
+    maxAttempts: number;
+    sourceItemId: string | null;
+    sourceKind: string | null;
+    sourceTitle: string | null;
+    stage: IngestionJobStage;
+    status: 'canceled' | 'failed' | 'queued' | 'running' | 'succeeded';
+    updatedAt: Date;
+  }): IngestionJobListItem {
+    return {
+      attemptCount: job.attemptCount,
+      createdAt: job.createdAt.toISOString(),
+      errorCode: job.errorCode,
+      errorMessage: job.errorMessage,
+      finishedAt: job.finishedAt?.toISOString() ?? null,
+      jobId: job.jobId,
+      kind: job.kind,
+      maxAttempts: job.maxAttempts,
+      sourceItemId: job.sourceItemId,
+      sourceKind:
+        job.sourceKind === 'file' ||
+        job.sourceKind === 'note' ||
+        job.sourceKind === 'web_page'
+          ? job.sourceKind
+          : null,
+      sourceTitle: job.sourceTitle,
+      stage: job.stage,
+      status: job.status,
+      updatedAt: job.updatedAt.toISOString(),
+    };
+  }
+
   return {
     async completeJob(input) {
       await db.transaction(async (tx) => {
@@ -293,27 +323,7 @@ export function createIngestionRepository(
         .orderBy(desc(ingestionJobs.createdAt))
         .limit(input.limit);
 
-      return jobs.map((job) => ({
-        attemptCount: job.attemptCount,
-        createdAt: job.createdAt.toISOString(),
-        errorCode: job.errorCode,
-        errorMessage: job.errorMessage,
-        finishedAt: job.finishedAt?.toISOString() ?? null,
-        jobId: job.jobId,
-        kind: job.kind,
-        maxAttempts: job.maxAttempts,
-        sourceItemId: job.sourceItemId,
-        sourceKind:
-          job.sourceKind === 'file' ||
-          job.sourceKind === 'note' ||
-          job.sourceKind === 'web_page'
-            ? job.sourceKind
-            : null,
-        sourceTitle: job.sourceTitle,
-        stage: job.stage,
-        status: job.status,
-        updatedAt: job.updatedAt.toISOString(),
-      }));
+      return jobs.map((job) => toIngestionJobListItem(job));
     },
     async getJobForDispatch(input) {
       const [job] = await db
@@ -326,6 +336,46 @@ export function createIngestionRepository(
         .limit(1);
 
       return job ?? null;
+    },
+    async getJobRealtimeTarget(input) {
+      const [job] = await db
+        .select({
+          attemptCount: ingestionJobs.attemptCount,
+          createdAt: ingestionJobs.createdAt,
+          errorCode: ingestionJobs.errorCode,
+          errorMessage: ingestionJobs.errorMessage,
+          finishedAt: ingestionJobs.finishedAt,
+          jobId: ingestionJobs.id,
+          kind: ingestionJobs.kind,
+          maxAttempts: ingestionJobs.maxAttempts,
+          sourceItemId: ingestionJobs.sourceItemId,
+          sourceKind: sourceItems.kind,
+          sourceTitle: sourceItems.title,
+          stage: ingestionJobs.stage,
+          status: ingestionJobs.status,
+          updatedAt: ingestionJobs.updatedAt,
+          userId: spaces.ownerUserId,
+        })
+        .from(ingestionJobs)
+        .innerJoin(spaces, eq(ingestionJobs.spaceId, spaces.id))
+        .leftJoin(sourceItems, eq(ingestionJobs.sourceItemId, sourceItems.id))
+        .where(
+          and(
+            eq(ingestionJobs.id, input.jobId),
+            isNull(spaces.deletedAt),
+            isNull(spaces.archivedAt),
+          ),
+        )
+        .limit(1);
+
+      if (!job) {
+        return null;
+      }
+
+      return {
+        job: toIngestionJobListItem(job),
+        userId: job.userId,
+      };
     },
     async markJobStage(input) {
       await db

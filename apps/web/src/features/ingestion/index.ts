@@ -1,1 +1,1 @@
-export { IngestionJobsCard } from './components/ingestion-jobs-card';
+export { IngestionJobsCardLive } from './components/ingestion-jobs-card-live';

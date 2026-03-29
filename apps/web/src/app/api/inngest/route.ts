@@ -5,6 +5,7 @@ import { inngestFunctions } from '@/inngest/functions';
 import { withEvlog } from '@/lib/evlog';
 
 export const runtime = 'nodejs';
+export const maxDuration = 300;
 
 const {
   GET: inngestGet,

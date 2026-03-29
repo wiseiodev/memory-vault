@@ -7,6 +7,10 @@ import { ORPCError } from '@orpc/server';
 import { generateId } from '@/db/columns/id';
 import { inngest } from '@/inngest/client';
 import { createIngestionJobRequestedEvent } from '@/inngest/events';
+import {
+  ingestionJobsChannel,
+  ingestionJobUpsertTopicName,
+} from '@/inngest/realtime';
 import { getRequestLogger } from '@/lib/evlog';
 import {
   createIngestionRepository,
@@ -25,12 +29,37 @@ type DispatchDeps = {
 type RetryDeps = {
   dispatchIngestionJob: typeof dispatchIngestionJob;
   now: () => Date;
+  publishJobUpdate: typeof publishIngestionJobUpdate;
   repository: IngestionRepository;
 };
 
+type IngestionStepRunner = <T>(
+  stepId: string,
+  fn: () => Promise<T>,
+) => Promise<T>;
+
+type RealtimeJobUpdate = {
+  job: IngestionJobListItem;
+  userId: string;
+};
+
 type ProcessDeps = {
+  loadJobRealtimeTarget?: (input: {
+    jobId: string;
+    stepId: string;
+  }) => Promise<RealtimeJobUpdate | null>;
   now: () => Date;
+  publishJobUpdate?: (input: {
+    stepId: string;
+    update: RealtimeJobUpdate;
+  }) => Promise<void>;
   repository: IngestionRepository;
+  run: IngestionStepRunner;
+};
+
+type PublishRealtimeDeps = {
+  publish: typeof inngest.realtime.publish;
+  repository: Pick<IngestionRepository, 'getJobRealtimeTarget'>;
 };
 
 class IngestionPipelineError extends Error {
@@ -72,6 +101,31 @@ export async function dispatchIngestionJob(
       jobId: input.jobId,
     }),
   );
+}
+
+export async function publishIngestionJobUpdate(
+  input: { jobId: string },
+  deps: PublishRealtimeDeps = {
+    publish: inngest.realtime.publish.bind(inngest.realtime),
+    repository: createIngestionRepository(),
+  },
+) {
+  const target = await deps.repository.getJobRealtimeTarget({
+    jobId: input.jobId,
+  });
+
+  if (!target) {
+    return null;
+  }
+
+  await deps.publish(
+    ingestionJobsChannel({
+      userId: target.userId,
+    })[ingestionJobUpsertTopicName],
+    target.job,
+  );
+
+  return target.job;
 }
 
 export function buildNoteSegments(noteBody: string) {
@@ -123,6 +177,7 @@ export async function retryIngestionJob(
   deps: RetryDeps = {
     dispatchIngestionJob,
     now: () => new Date(),
+    publishJobUpdate: publishIngestionJobUpdate,
     repository: createIngestionRepository(),
   },
 ) {
@@ -173,6 +228,23 @@ export async function retryIngestionJob(
     );
   }
 
+  try {
+    await deps.publishJobUpdate({
+      jobId: queuedJob.jobId,
+    });
+  } catch (error) {
+    getRequestLogger().error(
+      error instanceof Error
+        ? error
+        : new Error('Unknown ingestion realtime publish failure'),
+      {
+        action: 'ingestion.realtime_publish_failed',
+        jobId: queuedJob.jobId,
+        sourceItemId: queuedJob.sourceItemId,
+      },
+    );
+  }
+
   return {
     jobId: queuedJob.jobId,
     previousStatus: queuedJob.previousStatus,
@@ -186,13 +258,54 @@ export async function retryIngestionJob(
 export async function processIngestionJob(
   input: { jobId: string },
   deps: ProcessDeps = {
+    loadJobRealtimeTarget: undefined,
     now: () => new Date(),
+    publishJobUpdate: undefined,
     repository: createIngestionRepository(),
+    run: async (_stepId, fn) => fn(),
   },
 ) {
-  const job = await deps.repository.getJobForProcessing({
-    jobId: input.jobId,
-  });
+  const publishRealtimeUpdate = async (
+    loadStepId: string,
+    publishStepId: string,
+  ) => {
+    if (!deps.loadJobRealtimeTarget || !deps.publishJobUpdate) {
+      return;
+    }
+
+    const update = await deps.loadJobRealtimeTarget({
+      jobId: input.jobId,
+      stepId: loadStepId,
+    });
+
+    if (!update) {
+      return;
+    }
+
+    try {
+      await deps.publishJobUpdate({
+        stepId: publishStepId,
+        update,
+      });
+    } catch (error) {
+      getRequestLogger().error(
+        error instanceof Error
+          ? error
+          : new Error('Unknown ingestion realtime publish failure'),
+        {
+          action: 'ingestion.realtime_publish_failed',
+          jobId: input.jobId,
+          sourceItemId: update.job.sourceItemId,
+        },
+      );
+    }
+  };
+
+  const job = await deps.run('load-ingestion-job', async () =>
+    deps.repository.getJobForProcessing({
+      jobId: input.jobId,
+    }),
+  );
 
   if (!job) {
     throw new IngestionPipelineError(
@@ -208,6 +321,8 @@ export async function processIngestionJob(
     );
   }
 
+  const sourceItemId = job.sourceItemId;
+
   if (job.status === 'succeeded') {
     return {
       jobId: job.jobId,
@@ -220,10 +335,13 @@ export async function processIngestionJob(
   let sourceBlobId = job.sourceBlobId;
 
   try {
-    const startedJob = await deps.repository.startJob({
-      jobId: job.jobId,
-      startedAt: deps.now(),
-    });
+    const startedAt = deps.now();
+    const startedJob = await deps.run('start-ingestion-job', async () =>
+      deps.repository.startJob({
+        jobId: job.jobId,
+        startedAt,
+      }),
+    );
 
     if (!startedJob) {
       return {
@@ -234,6 +352,10 @@ export async function processIngestionJob(
     }
 
     sourceBlobId = startedJob.sourceBlobId;
+    await publishRealtimeUpdate(
+      'load-running-job-update',
+      'publish-running-job-update',
+    );
 
     if (job.sourceKind !== 'note') {
       throw new IngestionPipelineError(
@@ -256,32 +378,56 @@ export async function processIngestionJob(
 
     currentStage = 'segment';
     const noteSegments = buildNoteSegments(noteBody);
-    await deps.repository.replaceSegments({
-      jobId: job.jobId,
-      segments: noteSegments,
-      sourceItemId: job.sourceItemId,
-      updatedAt: deps.now(),
-    });
+    await deps.run('replace-note-segments', async () =>
+      deps.repository.replaceSegments({
+        jobId: job.jobId,
+        segments: noteSegments,
+        sourceItemId,
+        updatedAt: deps.now(),
+      }),
+    );
+    await publishRealtimeUpdate(
+      'load-segment-job-update',
+      'publish-segment-job-update',
+    );
 
     currentStage = 'embed';
-    await deps.repository.markJobStage({
-      jobId: job.jobId,
-      stage: currentStage,
-      updatedAt: deps.now(),
-    });
+    await deps.run('mark-embed-stage', async () =>
+      deps.repository.markJobStage({
+        jobId: job.jobId,
+        stage: currentStage,
+        updatedAt: deps.now(),
+      }),
+    );
+    await publishRealtimeUpdate(
+      'load-embed-job-update',
+      'publish-embed-job-update',
+    );
 
     currentStage = 'promote';
-    await deps.repository.markJobStage({
-      jobId: job.jobId,
-      stage: currentStage,
-      updatedAt: deps.now(),
-    });
+    await deps.run('mark-promote-stage', async () =>
+      deps.repository.markJobStage({
+        jobId: job.jobId,
+        stage: currentStage,
+        updatedAt: deps.now(),
+      }),
+    );
+    await publishRealtimeUpdate(
+      'load-promote-job-update',
+      'publish-promote-job-update',
+    );
 
-    await deps.repository.completeJob({
-      finishedAt: deps.now(),
-      jobId: job.jobId,
-      sourceItemId: job.sourceItemId,
-    });
+    await deps.run('complete-ingestion-job', async () =>
+      deps.repository.completeJob({
+        finishedAt: deps.now(),
+        jobId: job.jobId,
+        sourceItemId,
+      }),
+    );
+    await publishRealtimeUpdate(
+      'load-complete-job-update',
+      'publish-complete-job-update',
+    );
 
     return {
       jobId: job.jobId,
@@ -299,16 +445,22 @@ export async function processIngestionJob(
               : 'Unknown ingestion failure.',
           );
 
-    await deps.repository.failJob({
-      errorCode: failure.code,
-      errorDetails: failure.details,
-      errorMessage: failure.message,
-      failedAt: deps.now(),
-      jobId: input.jobId,
-      sourceBlobId,
-      sourceItemId: job.sourceItemId,
-      stage: currentStage,
-    });
+    await deps.run('fail-ingestion-job', async () =>
+      deps.repository.failJob({
+        errorCode: failure.code,
+        errorDetails: failure.details,
+        errorMessage: failure.message,
+        failedAt: deps.now(),
+        jobId: input.jobId,
+        sourceBlobId,
+        sourceItemId,
+        stage: currentStage,
+      }),
+    );
+    await publishRealtimeUpdate(
+      'load-failed-job-update',
+      'publish-failed-job-update',
+    );
 
     throw failure;
   }

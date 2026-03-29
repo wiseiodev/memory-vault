@@ -1,18 +1,19 @@
 'use client';
 
-import { useRouter } from 'next/navigation';
 import { startTransition, useState } from 'react';
 
 import { rpc } from '@/rpc/client';
+import type { RetryIngestionJobResult } from '../schemas';
 
 type RetryIngestionJobButtonProps = {
   jobId: string;
+  onRetried?: (result: RetryIngestionJobResult) => void;
 };
 
 export function RetryIngestionJobButton({
   jobId,
+  onRetried,
 }: RetryIngestionJobButtonProps) {
-  const router = useRouter();
   const [error, setError] = useState<string | null>(null);
   const [isPending, setIsPending] = useState(false);
 
@@ -23,10 +24,10 @@ export function RetryIngestionJobButton({
       setIsPending(true);
 
       try {
-        await rpc.ingestion.retry({
+        const result = await rpc.ingestion.retry({
           jobId,
         });
-        router.refresh();
+        onRetried?.(result);
       } catch (retryError) {
         setError(
           retryError instanceof Error

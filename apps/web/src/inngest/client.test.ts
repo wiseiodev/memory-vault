@@ -22,6 +22,9 @@ describe('createInngestClientOptions', () => {
         }),
       ),
     ).toEqual({
+      checkpointing: {
+        maxRuntime: '240s',
+      },
       id: 'memory-vault-web',
       isDev: true,
     });
@@ -39,6 +42,9 @@ describe('createInngestClientOptions', () => {
       ),
     ).toEqual({
       baseUrl: 'http://localhost:8288',
+      checkpointing: {
+        maxRuntime: '240s',
+      },
       eventKey: 'evt_test',
       id: 'memory-vault-web',
       signingKey: 'signkey_test',
