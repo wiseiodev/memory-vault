@@ -1,7 +1,6 @@
 import { describe, expect, it, vi } from 'vitest';
 import { IngestionPipelineError } from './errors';
 import {
-  __private__,
   type ExtractSourceDocumentInput,
   extractSourceDocument,
 } from './extraction';
@@ -28,7 +27,6 @@ function createDeps() {
     assertSafeWebUrl: vi.fn(async (url: string) => url),
     extractHardWebPageWithAi: vi.fn(),
     extractImageWithAi: vi.fn(),
-    extractPdfPages: vi.fn(),
     extractScannedPdfWithAi: vi.fn(),
     fetch: vi.fn(),
     readObjectBytes: vi.fn(),
@@ -311,53 +309,9 @@ describe('extractSourceDocument', () => {
     });
   });
 
-  it('extracts text PDFs deterministically when page text exists', async () => {
+  it('routes PDFs directly to AI OCR', async () => {
     const deps = createDeps();
     deps.readObjectBytes.mockResolvedValue(new Uint8Array([1, 2, 3]));
-    deps.extractPdfPages.mockResolvedValue({
-      imageOnlyPageCount: 0,
-      pages: [
-        {
-          content: 'Page one paragraph.',
-          pageNumber: 1,
-        },
-        {
-          content: 'Page two paragraph.',
-          pageNumber: 2,
-        },
-      ],
-      totalPages: 2,
-    });
-
-    const document = await extractSourceDocument(
-      createJob({
-        mimeType: 'application/pdf',
-        sourceBlobId: 'blob_123',
-        sourceBlobObjectKey: 'spaces/spc_123/report.pdf',
-        sourceKind: 'file',
-        sourceTitle: 'report.pdf',
-      }),
-      deps,
-    );
-
-    expect(document.metadata).toMatchObject({
-      extractionStrategy: 'deterministic',
-      extractor: 'pdfjs',
-    });
-    expect(document.blocks[0]?.metadata).toMatchObject({
-      pageNumber: 1,
-    });
-    expect(deps.extractScannedPdfWithAi).not.toHaveBeenCalled();
-  });
-
-  it('falls back to AI OCR for scanned PDFs', async () => {
-    const deps = createDeps();
-    deps.readObjectBytes.mockResolvedValue(new Uint8Array([1, 2, 3]));
-    deps.extractPdfPages.mockResolvedValue({
-      imageOnlyPageCount: 1,
-      pages: [],
-      totalPages: 1,
-    });
     deps.extractScannedPdfWithAi.mockResolvedValue({
       configuredModel: 'google/gemini-3-flash',
       model: 'google/gemini-3-flash',
@@ -370,7 +324,7 @@ describe('extractSourceDocument', () => {
             pageNumber: 1,
           },
         ],
-        reason: 'No embedded PDF text was available.',
+        reason: 'OCR extraction path.',
         title: 'Scanned note',
       },
       providerMetadata: {},
@@ -386,21 +340,23 @@ describe('extractSourceDocument', () => {
       createJob({
         mimeType: 'application/pdf',
         sourceBlobId: 'blob_123',
-        sourceBlobObjectKey: 'spaces/spc_123/scanned.pdf',
+        sourceBlobObjectKey: 'spaces/spc_123/report.pdf',
         sourceKind: 'file',
-        sourceTitle: 'scanned.pdf',
+        sourceTitle: 'report.pdf',
       }),
       deps,
     );
 
     expect(document.metadata).toMatchObject({
       configuredPrimaryModel: 'google/gemini-3-flash',
-      extractionStrategy: 'gateway_fallback',
-      fallbackReason: 'scanned_pdf',
+      extractionStrategy: 'ai_ocr',
+      extractor: 'vercel-ai-gateway',
+      fallbackUsed: false,
       providerFallbackUsed: true,
       responseModel: 'openai/gpt-5-mini',
       responseProvider: 'openai',
     });
+    expect(document.metadata).not.toHaveProperty('fallbackReason');
     expect(document.blocks[0]).toMatchObject({
       kind: 'ocr',
       metadata: expect.objectContaining({
@@ -409,26 +365,19 @@ describe('extractSourceDocument', () => {
           'openai/gpt-5-mini',
           'anthropic/claude-sonnet-4.6',
         ],
-        providerRouteType: 'configured_fallback_order',
+        extractionStrategy: 'ai_ocr',
+        fallbackUsed: false,
+        pageNumber: 1,
       }),
     });
+    expect(document.blocks[0]?.metadata).not.toHaveProperty('fallbackReason');
+    expect(deps.extractScannedPdfWithAi).toHaveBeenCalledOnce();
   });
 
-  it('preserves the original PDF bytes for OCR fallback if deterministic parsing detaches its buffer', async () => {
+  it('passes the original PDF bytes through to AI OCR', async () => {
     const deps = createDeps();
     const originalBytes = new Uint8Array([1, 2, 3, 4]);
     deps.readObjectBytes.mockResolvedValue(originalBytes);
-    deps.extractPdfPages.mockImplementation(async ({ bytes }) => {
-      structuredClone(bytes, {
-        transfer: [bytes.buffer],
-      });
-
-      return {
-        imageOnlyPageCount: 1,
-        pages: [],
-        totalPages: 1,
-      };
-    });
     deps.extractScannedPdfWithAi.mockImplementation(async ({ bytes }) => {
       expect(Array.from(bytes)).toEqual([1, 2, 3, 4]);
 
@@ -443,7 +392,7 @@ describe('extractSourceDocument', () => {
               pageNumber: 1,
             },
           ],
-          reason: 'No embedded PDF text was available.',
+          reason: 'OCR extraction path.',
           title: 'Scanned note',
         },
         providerMetadata: {},
@@ -467,134 +416,6 @@ describe('extractSourceDocument', () => {
     );
 
     expect(deps.extractScannedPdfWithAi).toHaveBeenCalledOnce();
-  });
-
-  it('keeps deterministic PDF extraction when a PDF has mixed text and non-text pages', async () => {
-    const deps = createDeps();
-    deps.readObjectBytes.mockResolvedValue(new Uint8Array([1, 2, 3]));
-    deps.extractPdfPages.mockResolvedValue({
-      imageOnlyPageCount: 1,
-      pages: [
-        {
-          content: 'Embedded text from page one.',
-          pageNumber: 1,
-        },
-      ],
-      totalPages: 2,
-    });
-    const document = await extractSourceDocument(
-      createJob({
-        mimeType: 'application/pdf',
-        sourceBlobId: 'blob_123',
-        sourceBlobObjectKey: 'spaces/spc_123/hybrid.pdf',
-        sourceKind: 'file',
-        sourceTitle: 'hybrid.pdf',
-      }),
-      deps,
-    );
-
-    expect(document.metadata).toMatchObject({
-      extractionStrategy: 'deterministic',
-      extractor: 'pdfjs',
-    });
-    expect(document.blocks).toHaveLength(1);
-    expect(deps.extractScannedPdfWithAi).not.toHaveBeenCalled();
-  });
-
-  it('keeps deterministic PDF extraction when the missing page is blank, not image-only', async () => {
-    const deps = createDeps();
-    deps.readObjectBytes.mockResolvedValue(new Uint8Array([1, 2, 3]));
-    deps.extractPdfPages.mockResolvedValue({
-      imageOnlyPageCount: 0,
-      pages: [
-        {
-          content: 'Embedded text from page one.',
-          pageNumber: 1,
-        },
-      ],
-      totalPages: 2,
-    });
-
-    const document = await extractSourceDocument(
-      createJob({
-        mimeType: 'application/pdf',
-        sourceBlobId: 'blob_123',
-        sourceBlobObjectKey: 'spaces/spc_123/blank-page.pdf',
-        sourceKind: 'file',
-        sourceTitle: 'blank-page.pdf',
-      }),
-      deps,
-    );
-
-    expect(document.metadata).toMatchObject({
-      extractionStrategy: 'deterministic',
-      extractor: 'pdfjs',
-      imageOnlyPageCount: 0,
-    });
-    expect(deps.extractScannedPdfWithAi).not.toHaveBeenCalled();
-  });
-
-  it('preloads the pdfjs worker module for server-side PDF extraction', async () => {
-    vi.resetModules();
-    const originalDOMMatrix = globalThis.DOMMatrix;
-    // Simulate a server runtime where pdfjs needs to install its own geometry
-    // support before the worker module evaluates.
-    // @ts-expect-error test override
-    globalThis.DOMMatrix = undefined;
-    vi.doMock('pdfjs-dist/legacy/build/pdf.worker.mjs', () => ({
-      WorkerMessageHandler: {
-        domMatrixTypeAtImport: typeof globalThis.DOMMatrix,
-        setup: vi.fn(),
-      },
-    }));
-    const getOperatorList = vi.fn(async () => ({ fnArray: [] }));
-    vi.doMock('pdfjs-dist/legacy/build/pdf.mjs', () => ({
-      getDocument: vi.fn(() => ({
-        promise: Promise.resolve({
-          getPage: vi.fn(async () => ({
-            getOperatorList,
-            getTextContent: vi.fn(async () => ({
-              items: [{ str: 'Server-safe PDF text.' }],
-            })),
-          })),
-          numPages: 1,
-        }),
-      })),
-    }));
-
-    const extraction = await __private__.defaultExtractPdfPages({
-      bytes: new Uint8Array([1, 2, 3]),
-    });
-    const globalPdfJsWorker = globalThis as typeof globalThis & {
-      pdfjsWorker?: {
-        WorkerMessageHandler?: {
-          domMatrixTypeAtImport?: string;
-        };
-      };
-    };
-
-    expect(extraction.pages).toEqual([
-      {
-        content: 'Server-safe PDF text.',
-        pageNumber: 1,
-      },
-    ]);
-    expect(getOperatorList).not.toHaveBeenCalled();
-    expect(
-      globalPdfJsWorker.pdfjsWorker?.WorkerMessageHandler
-        ?.domMatrixTypeAtImport,
-    ).toBe('function');
-    expect(globalPdfJsWorker.pdfjsWorker?.WorkerMessageHandler).toBeDefined();
-
-    if (originalDOMMatrix) {
-      globalThis.DOMMatrix = originalDOMMatrix;
-    } else {
-      // @ts-expect-error test cleanup
-      delete globalThis.DOMMatrix;
-    }
-
-    vi.doUnmock('pdfjs-dist/legacy/build/pdf.mjs');
-    vi.doUnmock('pdfjs-dist/legacy/build/pdf.worker.mjs');
   });
 
   it('uses AI OCR for images', async () => {

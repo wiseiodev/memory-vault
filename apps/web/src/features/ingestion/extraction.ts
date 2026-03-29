@@ -33,24 +33,10 @@ type IngestionJobForExtraction = {
 
 export type ExtractSourceDocumentInput = IngestionJobForExtraction;
 
-type PdfPage = {
-  content: string;
-  pageNumber: number;
-};
-
-type PdfTextExtraction = {
-  imageOnlyPageCount: number;
-  pages: PdfPage[];
-  totalPages: number;
-};
-
-type PdfJsModule = typeof import('pdfjs-dist/legacy/build/pdf.mjs');
-
 type ExtractSourceDeps = {
   assertSafeWebUrl: (url: string) => Promise<string>;
   extractHardWebPageWithAi: typeof extractHardWebPageWithAi;
   extractImageWithAi: typeof extractImageWithAi;
-  extractPdfPages: (input: { bytes: Uint8Array }) => Promise<PdfTextExtraction>;
   extractScannedPdfWithAi: typeof extractScannedPdfWithAi;
   fetch: typeof fetch;
   readObjectBytes: typeof readObjectBytes;
@@ -355,98 +341,12 @@ async function extractReadableHtml(html: string, url: string) {
   };
 }
 
-function ensurePdfServerGeometryPolyfills() {
-  const globalScope = globalThis as typeof globalThis & {
-    DOMMatrix?: typeof DOMMatrix;
-  };
-
-  if (globalScope.DOMMatrix) {
-    return;
-  }
-
-  class ServerDOMMatrix {
-    a = 1;
-    b = 0;
-    c = 0;
-    d = 1;
-    e = 0;
-    f = 0;
-
-    scaleSelf(scaleX: number, scaleY = scaleX) {
-      this.a *= scaleX;
-      this.b *= scaleX;
-      this.c *= scaleY;
-      this.d *= scaleY;
-      return this;
-    }
-
-    translateSelf(translateX: number, translateY: number) {
-      this.e += this.a * translateX + this.c * translateY;
-      this.f += this.b * translateX + this.d * translateY;
-      return this;
-    }
-  }
-
-  globalScope.DOMMatrix = ServerDOMMatrix as typeof DOMMatrix;
-}
-
-async function loadPdfJsForServer(): Promise<PdfJsModule> {
-  const pdfjs = await import('pdfjs-dist/legacy/build/pdf.mjs');
-  ensurePdfServerGeometryPolyfills();
-  const pdfjsWorker = await import('pdfjs-dist/legacy/build/pdf.worker.mjs');
-  const globalPdfJsWorker = globalThis as typeof globalThis & {
-    pdfjsWorker?: { WorkerMessageHandler?: unknown };
-  };
-
-  if (!globalPdfJsWorker.pdfjsWorker?.WorkerMessageHandler) {
-    globalPdfJsWorker.pdfjsWorker = {
-      WorkerMessageHandler: pdfjsWorker.WorkerMessageHandler,
-    };
-  }
-
-  return pdfjs;
-}
-
-async function defaultExtractPdfPages(input: {
-  bytes: Uint8Array;
-}): Promise<PdfTextExtraction> {
-  const pdfjs = await loadPdfJsForServer();
-  const document = await pdfjs.getDocument({
-    data: input.bytes,
-    useWorkerFetch: false,
-  }).promise;
-  const pages: PdfPage[] = [];
-
-  for (let pageNumber = 1; pageNumber <= document.numPages; pageNumber += 1) {
-    const page = await document.getPage(pageNumber);
-    const textContent = await page.getTextContent();
-    const content = normalizeText(
-      textContent.items
-        .map((item) => ('str' in item ? item.str : ''))
-        .join(' '),
-    );
-
-    if (!content) {
-      continue;
-    }
-
-    pages.push({
-      content,
-      pageNumber,
-    });
-  }
-
-  return {
-    imageOnlyPageCount: 0,
-    pages,
-    totalPages: document.numPages,
-  };
-}
-
-function aiPagesToDocument(input: {
+function gatewayPagesToDocument(input: {
   canonicalUri: string | null;
   configuredModel?: string;
-  fallbackReason: string;
+  extractionStrategy: 'ai_ocr' | 'gateway_fallback';
+  fallbackReason?: string;
+  fallbackUsed: boolean;
   kind: 'ocr' | 'plain_text';
   model: string;
   mimeType: string | null;
@@ -459,43 +359,43 @@ function aiPagesToDocument(input: {
     ? input.model.split('/')[0]
     : null;
   const providerFallbackUsed = input.model !== configuredPrimaryModel;
+  const baseMetadata = {
+    configuredPrimaryModel,
+    extractionStrategy: input.extractionStrategy,
+    extractor: 'vercel-ai-gateway',
+    fallbackUsed: input.fallbackUsed,
+    model: input.model,
+    providerFallbackUsed,
+    providerRoute: input.providerRoute,
+    providerRouteType: 'configured_fallback_order' as const,
+    responseModel: input.model,
+    responseProvider,
+    configuredProviderRoute: input.providerRoute,
+  };
+  const fallbackMetadata =
+    input.fallbackReason === undefined
+      ? {}
+      : {
+          fallbackReason: input.fallbackReason,
+        };
 
   return buildExtractedDocument({
     blocks: input.output.pages.map((page) => ({
       content: page.content,
       kind: input.kind,
       metadata: {
-        configuredPrimaryModel,
-        extractionStrategy: 'gateway_fallback',
-        extractor: 'vercel-ai-gateway',
-        fallbackReason: input.fallbackReason,
-        fallbackUsed: true,
-        model: input.model,
+        ...baseMetadata,
+        ...fallbackMetadata,
         pageNumber: page.pageNumber ?? undefined,
-        providerFallbackUsed,
-        providerRoute: input.providerRoute,
-        providerRouteType: 'configured_fallback_order',
-        responseModel: input.model,
-        responseProvider,
-        configuredProviderRoute: input.providerRoute,
       },
     })),
     canonicalUri: input.canonicalUri,
     languageCode: input.output.languageCode ?? null,
     metadata: {
       confidence: input.output.confidence ?? null,
-      configuredPrimaryModel,
-      extractionStrategy: 'gateway_fallback',
-      fallbackReason: input.fallbackReason,
-      fallbackUsed: true,
-      model: input.model,
-      providerRoute: input.providerRoute,
-      providerFallbackUsed,
-      providerRouteType: 'configured_fallback_order',
+      ...baseMetadata,
+      ...fallbackMetadata,
       reason: input.output.reason ?? null,
-      responseModel: input.model,
-      responseProvider,
-      configuredProviderRoute: input.providerRoute,
     },
     mimeType: input.mimeType,
     sourceBlobId: input.sourceBlobId,
@@ -550,10 +450,12 @@ async function fallbackWebPageToAi(input: {
     url: input.canonicalUri,
   });
 
-  return aiPagesToDocument({
+  return gatewayPagesToDocument({
     canonicalUri: input.canonicalUri,
     configuredModel: aiResult.configuredModel,
+    extractionStrategy: 'gateway_fallback',
     fallbackReason: input.fallbackReason,
+    fallbackUsed: true,
     kind: 'plain_text',
     model: aiResult.responseModel ?? aiResult.model,
     mimeType: 'text/html',
@@ -608,51 +510,16 @@ async function extractFileBytesDocument(
   }
 
   if (inferredMimeType === 'application/pdf') {
-    const extraction = await deps.extractPdfPages({
-      // pdfjs may transfer/detach the provided buffer while parsing.
-      // Keep the original bytes intact for an OCR fallback path.
-      bytes: input.bytes.slice(),
-    });
-
-    // Keep the server-side PDF path limited to text extraction only.
-    // pdfjs image/operator inspection reaches geometry APIs that are not
-    // available in the Vercel server runtime, so OCR is reserved for PDFs
-    // with no extractable text at all.
-    if (extraction.pages.length > 0) {
-      return buildExtractedDocument({
-        blocks: extraction.pages.map((page) => ({
-          content: page.content,
-          kind: 'plain_text',
-          metadata: {
-            extractionStrategy: 'deterministic',
-            extractor: 'pdfjs',
-            fallbackUsed: false,
-            pageNumber: page.pageNumber,
-          },
-        })),
-        canonicalUri: input.canonicalUri,
-        languageCode: null,
-        metadata: {
-          extractionStrategy: 'deterministic',
-          extractor: 'pdfjs',
-          fallbackUsed: false,
-          imageOnlyPageCount: extraction.imageOnlyPageCount,
-        },
-        mimeType: inferredMimeType,
-        sourceBlobId: input.sourceBlobId,
-        title: input.title,
-      });
-    }
-
     const aiResult = await deps.extractScannedPdfWithAi({
       bytes: input.bytes,
       title: input.title,
     });
 
-    return aiPagesToDocument({
+    return gatewayPagesToDocument({
       canonicalUri: input.canonicalUri,
       configuredModel: aiResult.configuredModel,
-      fallbackReason: 'scanned_pdf',
+      extractionStrategy: 'ai_ocr',
+      fallbackUsed: false,
       kind: 'ocr',
       model: aiResult.responseModel ?? aiResult.model,
       mimeType: inferredMimeType,
@@ -669,10 +536,12 @@ async function extractFileBytesDocument(
       title: input.title,
     });
 
-    return aiPagesToDocument({
+    return gatewayPagesToDocument({
       canonicalUri: input.canonicalUri,
       configuredModel: aiResult.configuredModel,
+      extractionStrategy: 'gateway_fallback',
       fallbackReason: 'image_ocr',
+      fallbackUsed: true,
       kind: 'ocr',
       model: aiResult.responseModel ?? aiResult.model,
       mimeType: inferredMimeType,
@@ -939,7 +808,6 @@ export async function extractSourceDocument(
     assertSafeWebUrl: defaultAssertSafeWebUrl,
     extractHardWebPageWithAi,
     extractImageWithAi,
-    extractPdfPages: defaultExtractPdfPages,
     extractScannedPdfWithAi,
     fetch,
     readObjectBytes,
@@ -965,8 +833,3 @@ export async function extractSourceDocument(
     },
   );
 }
-
-export const __private__ = {
-  defaultExtractPdfPages,
-  loadPdfJsForServer,
-};

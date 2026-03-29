@@ -70,11 +70,12 @@ describe('buildSegmentsFromExtractedDocument', () => {
           charEnd: oversizedBlock.length,
           charStart: 0,
           content: oversizedBlock,
-          kind: 'plain_text',
+          kind: 'ocr',
           metadata: {
-            extractionStrategy: 'deterministic',
-            extractor: 'pdfjs',
+            extractionStrategy: 'ai_ocr',
+            extractor: 'vercel-ai-gateway',
             fallbackUsed: false,
+            model: 'google/gemini-3-flash',
             pageNumber: 1,
             sourceUri: 'memory://capture/repeated',
           },
@@ -84,9 +85,9 @@ describe('buildSegmentsFromExtractedDocument', () => {
       content: oversizedBlock,
       languageCode: 'en',
       metadata: {
-        extractionStrategy: 'deterministic',
+        extractionStrategy: 'ai_ocr',
       },
-      mimeType: 'text/plain',
+      mimeType: 'application/pdf',
       sourceBlobId: 'blob_123',
       title: 'Repeated text',
     });

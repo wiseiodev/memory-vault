@@ -92,8 +92,7 @@ Currently supported file inputs:
 Current file behavior:
 
 - text-like files are decoded directly
-- PDFs use deterministic `pdfjs-dist` extraction first
-- scanned/no-text PDFs fall back to AI OCR
+- PDFs go directly to AI OCR
 - images go directly to AI OCR
 
 Unsupported file types fail explicitly instead of being guessed.
@@ -106,21 +105,18 @@ flowchart TD
     B -->|note| C["Deterministic note extraction"]
     B -->|web_page| D["Fetch + Readability"]
     B -->|file:text-like| E["Decode bytes as text"]
-    B -->|file:pdf| F["pdfjs page text extraction"]
-    B -->|file:image| G["AI OCR fallback"]
+    B -->|file:pdf| F["AI PDF OCR"]
+    B -->|file:image| G["AI image OCR fallback"]
 
     D --> H{"Usable text?"}
-    F --> I{"Embedded text present?"}
 
     H -->|yes| J["Deterministic output"]
     H -->|no| K["AI hard-web extraction"]
-    I -->|yes| J
-    I -->|no| L["AI scanned-PDF extraction"]
     C --> J
     E --> J
     G --> M["OCR output"]
     K --> J
-    L --> M
+    F --> M
 ```
 
 ## Current AI Boundary
