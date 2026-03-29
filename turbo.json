@@ -9,6 +9,10 @@
       "cache": false,
       "persistent": true
     },
+    "//#inngest:dev": {
+      "cache": false,
+      "persistent": true
+    },
     "check": {
       "dependsOn": ["^check"],
       "outputs": []
