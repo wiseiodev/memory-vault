@@ -169,7 +169,12 @@ export function createIngestionRepository(
             extractionStatus: 'ready',
             updatedAt: input.finishedAt,
           })
-          .where(eq(sourceBlobs.sourceItemId, input.sourceItemId));
+          .where(
+            and(
+              eq(sourceBlobs.sourceItemId, input.sourceItemId),
+              isNull(sourceBlobs.deletedAt),
+            ),
+          );
 
         await tx
           .update(ingestionJobs)
@@ -569,7 +574,12 @@ export function createIngestionRepository(
               extractionStatus: 'processing',
               updatedAt: input.startedAt,
             })
-            .where(eq(sourceBlobs.sourceItemId, job.sourceItemId))
+            .where(
+              and(
+                eq(sourceBlobs.sourceItemId, job.sourceItemId),
+                isNull(sourceBlobs.deletedAt),
+              ),
+            )
             .returning({
               sourceBlobId: sourceBlobs.id,
             });

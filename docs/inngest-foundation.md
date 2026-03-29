@@ -44,18 +44,15 @@ Use `apps/web/.env.local` for local app config. The example file at
 1. Run `pnpm dev`
 2. Turbo starts the web app plus the persistent `sst:dev` and `inngest:dev`
    tasks together
-3. The app-level `inngest:dev` script waits for
-   `http://localhost:3000/api/inngest` before starting `inngest-cli`
-4. Open the Inngest Dev Server and confirm it discovers
+3. Open the Inngest Dev Server and confirm it discovers
    `http://localhost:3000/api/inngest`
-5. Use the `app/inngest.setup.ping` event or the `inngest-setup-ping`
+4. Use the `app/inngest.setup.ping` event or the `inngest-setup-ping`
    function to confirm the route is wired correctly
-6. Create a note capture and verify it progresses through the ingestion stages
+5. Create a note capture and verify it progresses through the ingestion stages
    in `/app`
 
 You can still run `pnpm inngest:dev` directly, but that assumes the web app is
-is already starting locally; the helper script will wait for the endpoint to
-come up before launching the Inngest Dev Server.
+already running locally so `http://localhost:3000/api/inngest` is reachable.
 
 ## Realtime
 
