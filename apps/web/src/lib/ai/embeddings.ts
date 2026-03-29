@@ -3,8 +3,14 @@ import 'server-only';
 import { embed, embedMany, gateway } from 'ai';
 
 import { EMBEDDING_DIMENSIONS } from '@/db/columns';
+import {
+  createCachedEmbeddingModel,
+  createEmbeddingCacheMiddleware,
+  createRedisAiCacheStore,
+} from './cache';
 
 export const SEGMENT_EMBEDDING_MODEL = 'google/gemini-embedding-2';
+const QUERY_EMBEDDING_CACHE_TTL_SECONDS = 60 * 15;
 
 type EmbeddingTaskType = 'RETRIEVAL_DOCUMENT' | 'RETRIEVAL_QUERY';
 
@@ -46,6 +52,15 @@ function assertEmbeddingDimensions(embeddings: number[][]) {
   }
 }
 
+const cachedQueryEmbeddingModel = createCachedEmbeddingModel({
+  middleware: createEmbeddingCacheMiddleware({
+    namespace: 'query-embedding',
+    store: createRedisAiCacheStore(),
+    ttlSeconds: QUERY_EMBEDDING_CACHE_TTL_SECONDS,
+  }),
+  model: gateway.embeddingModel(SEGMENT_EMBEDDING_MODEL),
+});
+
 export async function embedDocumentTextValues(input: { values: string[] }) {
   readRequiredAiGatewayApiKey();
 
@@ -74,7 +89,7 @@ export async function embedQueryText(input: { value: string }) {
   readRequiredAiGatewayApiKey();
 
   const result = await embed({
-    model: gateway.embeddingModel(SEGMENT_EMBEDDING_MODEL),
+    model: cachedQueryEmbeddingModel,
     providerOptions: baseProviderOptions('RETRIEVAL_QUERY'),
     value: input.value,
   });

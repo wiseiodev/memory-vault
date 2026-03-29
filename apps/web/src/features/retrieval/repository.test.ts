@@ -170,6 +170,93 @@ describe('createRetrievalRepository', () => {
     );
   });
 
+  it('builds the expected memory full-text search query with citation path filtering', async () => {
+    const { db, execute } = createDbMock([
+      {
+        rows: [
+          {
+            canonicalUri: null,
+            confidence: '0.8',
+            content: 'Remember the passport appointment.',
+            createdAt: '2026-03-29T10:00:00.000Z',
+            memoryId: 'mem_1',
+            score: '0.72',
+            summary: 'Passport appointment',
+            title: 'Renewal',
+            updatedAt: '2026-03-29T12:00:00.000Z',
+          },
+        ],
+      },
+    ]);
+    const repository = createRetrievalRepository(db);
+
+    const result = await repository.searchMemoriesByText({
+      capturedBefore: new Date('2026-04-01T00:00:00.000Z'),
+      limit: 5,
+      query: 'passport',
+      sourceKinds: ['note'],
+      spaceId: 'spc_123',
+      userId: 'user_123',
+    });
+
+    const query = compileQuery(getExecutedQuery(execute));
+
+    expect(query.sql).toContain('"memories"."state" =');
+    expect(query.sql).toContain('exists (');
+    expect(query.sql).toContain('from "memory_citations"');
+    expect(query.sql).toContain('"source_items"."kind" in');
+    expect(query.params).toEqual(
+      expect.arrayContaining(['passport', 'user_123', 'spc_123', 'note']),
+    );
+    expect(result).toEqual([
+      expect.objectContaining({
+        memoryId: 'mem_1',
+        score: 0.72,
+      }),
+    ]);
+  });
+
+  it('loads grounded memory citations with backing segment evidence', async () => {
+    const { db, execute } = createDbMock([
+      {
+        rows: [
+          {
+            canonicalUri: 'https://example.com/note',
+            locator: { page: 2 },
+            memoryCitationOrdinal: 1,
+            memoryId: 'mem_1',
+            quoteText: null,
+            segmentContent: 'Bring ID and passport.',
+            segmentId: 'seg_1',
+            segmentMetadata: { page: 2 },
+            segmentOrdinal: 3,
+            sourceItemId: 'src_1',
+            sourceKind: 'note',
+            sourceTitle: 'Renewal note',
+          },
+        ],
+      },
+    ]);
+    const repository = createRetrievalRepository(db);
+
+    const result = await repository.listGroundingCitationsForMemories({
+      memoryIds: ['mem_1'],
+      userId: 'user_123',
+    });
+
+    const query = compileQuery(getExecutedQuery(execute));
+
+    expect(query.sql).toContain('"memory_citations"."segment_id" is not null');
+    expect(query.sql).toContain('"memories"."id" in');
+    expect(result).toEqual([
+      expect.objectContaining({
+        memoryId: 'mem_1',
+        quoteText: 'Bring ID and passport.',
+        segmentId: 'seg_1',
+      }),
+    ]);
+  });
+
   it('updates segment embeddings in a single set-based transaction query', async () => {
     const { db, execute, transaction } = createDbMock([
       { rowCount: 2, rows: [{ segmentId: 'seg_1' }, { segmentId: 'seg_2' }] },
