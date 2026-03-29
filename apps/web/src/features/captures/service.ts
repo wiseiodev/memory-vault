@@ -145,8 +145,12 @@ export async function finalizeUploadCapture(
 ): Promise<CaptureSummary> {
   const completedUpload = await deps.completeUpload(input);
 
+  if (!completedUpload.uploadedAt) {
+    throw new Error('completeUpload did not return an uploadedAt timestamp');
+  }
+
   return {
-    capturedAt: completedUpload.uploadedAt ?? new Date().toISOString(),
+    capturedAt: completedUpload.uploadedAt,
     kind: 'file',
     sourceBlobId: completedUpload.sourceBlobId,
     sourceItemId: completedUpload.sourceItemId,

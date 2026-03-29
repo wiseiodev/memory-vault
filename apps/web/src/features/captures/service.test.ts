@@ -208,4 +208,29 @@ describe('finalizeUploadCapture', () => {
       status: 'pending',
     });
   });
+
+  it('throws when upload finalization does not return an uploadedAt timestamp', async () => {
+    await expect(
+      finalizeUploadCapture(
+        {
+          sourceBlobId: 'blob_123',
+          sourceItemId: 'src_123',
+          userId: 'user_123',
+        },
+        {
+          completeUpload: vi.fn(async () => ({
+            bucket: 'memory-vault-bucket',
+            byteSize: '64',
+            contentType: 'text/plain',
+            etag: 'etag-123',
+            objectKey: 'spaces/spc_123/sources/src_123/blobs/blob_123/note.txt',
+            sourceBlobId: 'blob_123',
+            sourceItemId: 'src_123',
+            spaceId: 'spc_123',
+            uploadedAt: null,
+          })),
+        },
+      ),
+    ).rejects.toThrow('completeUpload did not return an uploadedAt timestamp');
+  });
 });
