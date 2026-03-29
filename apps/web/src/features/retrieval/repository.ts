@@ -1,6 +1,6 @@
 import 'server-only';
 
-import { and, eq, isNull, type SQL, sql } from 'drizzle-orm';
+import { type SQL, sql } from 'drizzle-orm';
 
 import { getDb } from '@/db';
 import { serializeVector } from '@/db/columns';
@@ -85,7 +85,7 @@ function effectiveSourceAtExpression() {
 }
 
 function vectorLiteral(value: number[]) {
-  return sql.raw(`'${serializeVector(value)}'::vector`);
+  return sql`${serializeVector(value)}::vector`;
 }
 
 function buildSharedFilters(input: {
@@ -243,31 +243,31 @@ export function createRetrievalRepository(
       }
 
       await db.transaction(async (tx) => {
-        for (const embedding of input.embeddings) {
-          const result = await tx
-            .update(segments)
-            .set({
-              embedding: vectorLiteral(embedding.embedding),
-              embeddingModel: embedding.embeddingModel,
-              embeddedAt: input.embeddedAt,
-              updatedAt: input.embeddedAt,
-            })
-            .where(
-              and(
-                eq(segments.id, embedding.segmentId),
-                isNull(segments.deletedAt),
-                isNull(segments.archivedAt),
-              ),
-            )
-            .returning({
-              segmentId: segments.id,
-            });
+        const values = sql.join(
+          input.embeddings.map((embedding) => {
+            return sql`(${embedding.segmentId}, ${serializeVector(embedding.embedding)}, ${embedding.embeddingModel})`;
+          }),
+          sql`, `,
+        );
 
-          if (result.length !== 1) {
-            throw new Error(
-              `Expected to update embedding for segment ${embedding.segmentId}, but it was no longer available.`,
-            );
-          }
+        const result = await tx.execute<{ segmentId: string }>(sql`
+          update ${segments}
+          set
+            "embedding" = cast(v.embedding as vector),
+            "embedding_model" = v.embedding_model,
+            "embedded_at" = ${input.embeddedAt},
+            "updated_at" = ${input.embeddedAt}
+          from (values ${values}) as v(segment_id, embedding, embedding_model)
+          where ${segments.id} = v.segment_id
+            and ${segments.deletedAt} is null
+            and ${segments.archivedAt} is null
+          returning ${segments.id} as "segmentId"
+        `);
+
+        if (result.rows.length !== input.embeddings.length) {
+          throw new Error(
+            `Expected to update embeddings for ${input.embeddings.length} segments, but only updated ${result.rows.length}. At least one segment was no longer available.`,
+          );
         }
       });
     },

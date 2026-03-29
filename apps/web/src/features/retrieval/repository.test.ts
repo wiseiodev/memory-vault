@@ -2,8 +2,7 @@ import type { SQL } from 'drizzle-orm';
 import { PgDialect } from 'drizzle-orm/pg-core';
 import { describe, expect, it, vi } from 'vitest';
 
-import { EMBEDDING_DIMENSIONS } from '@/db/columns';
-import { segments } from '@/db/schema';
+import { EMBEDDING_DIMENSIONS, serializeVector } from '@/db/columns';
 import { createRetrievalRepository } from './repository';
 
 function createEmbedding(seed: number) {
@@ -19,41 +18,9 @@ function createDbMock(
     const nextResponse = responses.shift();
     return nextResponse ?? { rows: [], rowCount: 0 };
   });
-  const updateCalls: Array<{
-    setValues?: Record<string, unknown>;
-    table: unknown;
-    whereClause?: unknown;
-  }> = [];
   const transaction = vi.fn(async (callback) => {
     return callback({
-      update(table: unknown) {
-        const updateCall: {
-          setValues?: Record<string, unknown>;
-          table: unknown;
-          whereClause?: unknown;
-        } = { table };
-        updateCalls.push(updateCall);
-
-        return {
-          set(values: Record<string, unknown>) {
-            updateCall.setValues = values;
-
-            return {
-              where(whereClause: unknown) {
-                updateCall.whereClause = whereClause;
-
-                return {
-                  returning: vi.fn(async () => {
-                    const nextResponse = responses.shift();
-
-                    return nextResponse?.rows ?? [];
-                  }),
-                };
-              },
-            };
-          },
-        };
-      },
+      execute,
     });
   });
 
@@ -64,7 +31,6 @@ function createDbMock(
     } as never,
     execute,
     transaction,
-    updateCalls,
   };
 }
 
@@ -192,17 +158,21 @@ describe('createRetrievalRepository', () => {
 
     expect(query.sql).toContain('<=>');
     expect(query.sql).toContain('::vector');
-    expect(query.sql).toContain(`'[${createEmbedding(1).join(',')}]'::vector`);
     expect(query.sql).toContain('"segments"."embedding" is not null');
     expect(query.sql).toContain('greatest(0, least(1, 1 - ((');
     expect(query.sql).toContain('order by');
-    expect(query.params).toEqual(expect.arrayContaining(['user_123', 3]));
+    expect(query.params).toEqual(
+      expect.arrayContaining([
+        serializeVector(createEmbedding(1)),
+        'user_123',
+        3,
+      ]),
+    );
   });
 
-  it('updates each segment embedding inside a transaction', async () => {
-    const { db, transaction, updateCalls } = createDbMock([
-      { rowCount: 1, rows: [{ segmentId: 'seg_1' }] },
-      { rowCount: 1, rows: [{ segmentId: 'seg_2' }] },
+  it('updates segment embeddings in a single set-based transaction query', async () => {
+    const { db, execute, transaction } = createDbMock([
+      { rowCount: 2, rows: [{ segmentId: 'seg_1' }, { segmentId: 'seg_2' }] },
     ]);
     const repository = createRetrievalRepository(db);
 
@@ -223,27 +193,21 @@ describe('createRetrievalRepository', () => {
     });
 
     expect(transaction).toHaveBeenCalledTimes(1);
-    expect(updateCalls).toHaveLength(2);
-    expect(updateCalls[0]?.table).toBe(segments);
-    expect(updateCalls[1]?.table).toBe(segments);
+    expect(execute).toHaveBeenCalledTimes(1);
 
-    const firstSetValues = updateCalls[0]?.setValues;
-    if (!firstSetValues) {
-      throw new Error('Expected first update() call to receive set() values.');
-    }
-
-    expect(firstSetValues.embeddingModel).toBe('google/gemini-embedding-2');
-    expect(firstSetValues.embeddedAt).toEqual(
-      new Date('2026-03-29T10:00:00.000Z'),
-    );
-    expect(firstSetValues.updatedAt).toEqual(
-      new Date('2026-03-29T10:00:00.000Z'),
-    );
-
-    const firstEmbeddingSql = compileQuery(firstSetValues.embedding as SQL);
-    expect(firstEmbeddingSql.sql).toContain('::vector');
-    expect(firstEmbeddingSql.sql).toContain(
-      `'[${createEmbedding(1).join(',')}]'::vector`,
+    const query = compileQuery(getExecutedQuery(execute));
+    expect(query.sql).toContain('update "segments"');
+    expect(query.sql).toContain('from (values');
+    expect(query.sql).toContain('cast(v.embedding as vector)');
+    expect(query.sql).toContain('returning "segments"."id" as "segmentId"');
+    expect(query.params).toEqual(
+      expect.arrayContaining([
+        'seg_1',
+        serializeVector(createEmbedding(1)),
+        'google/gemini-embedding-2',
+        'seg_2',
+        serializeVector(createEmbedding(2)),
+      ]),
     );
   });
 
@@ -263,7 +227,7 @@ describe('createRetrievalRepository', () => {
         ],
       }),
     ).rejects.toThrow(
-      'Expected to update embedding for segment seg_1, but it was no longer available.',
+      'Expected to update embeddings for 1 segments, but only updated 0. At least one segment was no longer available.',
     );
   });
 
