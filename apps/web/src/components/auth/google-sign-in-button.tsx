@@ -4,7 +4,7 @@ import { startTransition, useState } from 'react';
 
 import { authClient } from '@/lib/auth-client';
 
-export function GoogleSignInButton() {
+export function GoogleSignInButton(input: { callbackURL?: string }) {
   const [isPending, setIsPending] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -16,8 +16,8 @@ export function GoogleSignInButton() {
 
       try {
         await authClient.signIn.social({
+          callbackURL: input.callbackURL ?? '/app',
           provider: 'google',
-          callbackURL: '/app',
         });
       } catch (signInError) {
         console.error('Google sign-in failed', signInError);

@@ -1,12 +1,23 @@
-import { authed } from '@/rpc/procedures';
+import { authed, extensionAuthed } from '@/rpc/procedures';
 
 import {
+  abandonWebCaptureInput,
+  abandonWebCaptureOutput,
+  beginWebCaptureInput,
+  beginWebCaptureOutput,
   captureSummaryOutput,
+  completeWebCaptureInput,
+  createExtensionNoteInput,
   createNoteCaptureInput,
   createUrlCaptureInput,
+  extensionCaptureSummaryOutput,
   finalizeUploadCaptureInput,
 } from './schemas';
 import {
+  abandonWebCapture,
+  beginWebCapture,
+  completeWebCapture,
+  createExtensionNoteCapture,
   createNoteCapture,
   createUrlCapture,
   finalizeUploadCapture,
@@ -30,5 +41,45 @@ export const captureRouter = {
     .output(captureSummaryOutput)
     .handler(async ({ context, input }) => {
       return finalizeUploadCapture({ ...input, userId: context.user.id });
+    }),
+  createExtensionNote: extensionAuthed
+    .input(createExtensionNoteInput)
+    .output(extensionCaptureSummaryOutput)
+    .handler(async ({ context, input }) => {
+      return createExtensionNoteCapture({
+        ...input,
+        spaceId: context.extension.spaceId,
+        userId: context.extension.userId,
+      });
+    }),
+  beginWebCapture: extensionAuthed
+    .input(beginWebCaptureInput)
+    .output(beginWebCaptureOutput)
+    .handler(async ({ context, input }) => {
+      return beginWebCapture({
+        ...input,
+        spaceId: context.extension.spaceId,
+        userId: context.extension.userId,
+      });
+    }),
+  completeWebCapture: extensionAuthed
+    .input(completeWebCaptureInput)
+    .output(extensionCaptureSummaryOutput)
+    .handler(async ({ context, input }) => {
+      return completeWebCapture({
+        ...input,
+        spaceId: context.extension.spaceId,
+        userId: context.extension.userId,
+      });
+    }),
+  abandonWebCapture: extensionAuthed
+    .input(abandonWebCaptureInput)
+    .output(abandonWebCaptureOutput)
+    .handler(async ({ context, input }) => {
+      return abandonWebCapture({
+        ...input,
+        spaceId: context.extension.spaceId,
+        userId: context.extension.userId,
+      });
     }),
 };

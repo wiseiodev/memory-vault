@@ -58,6 +58,7 @@ describe('rpc route', () => {
     requestLogger.error.mockReset();
     requestLogger.set.mockReset();
     withEvlog.mockClear();
+    vi.unstubAllEnvs();
     vi.resetModules();
   });
 
@@ -72,6 +73,49 @@ describe('rpc route', () => {
     expect(withEvlog).toHaveBeenCalledTimes(1);
     expect(response.status).toBe(404);
     expect(await response.text()).toBe('Not found');
+  });
+
+  it('returns CORS headers for allowlisted extension preflight requests', async () => {
+    vi.stubEnv('CHROME_EXTENSION_IDS', 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa');
+
+    const route = await import('./route');
+    const response = await route.OPTIONS(
+      new Request('https://example.com/rpc', {
+        headers: {
+          origin: 'chrome-extension://aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa',
+        },
+        method: 'OPTIONS',
+      }),
+    );
+
+    expect(response.status).toBe(204);
+    expect(response.headers.get('Access-Control-Allow-Origin')).toBe(
+      'chrome-extension://aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa',
+    );
+    expect(response.headers.get('Access-Control-Allow-Methods')).toBe(
+      'GET, POST, OPTIONS',
+    );
+  });
+
+  it('applies allowlisted extension CORS headers to regular responses too', async () => {
+    vi.stubEnv('CHROME_EXTENSION_IDS', 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa');
+    handle.mockResolvedValue({
+      response: null,
+    });
+
+    const route = await import('./route');
+    const response = await route.GET(
+      new Request('https://example.com/rpc', {
+        headers: {
+          origin: 'chrome-extension://aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa',
+        },
+      }),
+    );
+
+    expect(response.status).toBe(404);
+    expect(response.headers.get('Access-Control-Allow-Origin')).toBe(
+      'chrome-extension://aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa',
+    );
   });
 
   it('logs unexpected RPC errors through the request logger', async () => {

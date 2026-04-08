@@ -442,6 +442,7 @@ async function fallbackWebPageToAi(input: {
   deps: ExtractSourceDeps;
   fallbackReason: 'fetch_failed' | 'low_text_yield' | 'readability_failed';
   html?: string | null;
+  sourceBlobId: string | null;
   title: string | null;
 }) {
   const aiResult = await input.deps.extractHardWebPageWithAi({
@@ -461,7 +462,7 @@ async function fallbackWebPageToAi(input: {
     mimeType: 'text/html',
     output: aiResult.output,
     providerRoute: aiResult.providerRoute,
-    sourceBlobId: null,
+    sourceBlobId: input.sourceBlobId,
   });
 }
 
@@ -625,6 +626,129 @@ async function extractFileDocument(
   );
 }
 
+async function extractHtmlDocument(input: {
+  canonicalUri: string;
+  deps: ExtractSourceDeps;
+  html: string;
+  mimeType: string;
+  sourceBlobId: string | null;
+  title: string | null;
+}) {
+  try {
+    const { article, documentTitle } = await extractReadableHtml(
+      input.html,
+      input.canonicalUri,
+    );
+    const extractedText = normalizeText(article?.textContent ?? '');
+
+    if (extractedText.length >= MIN_READABILITY_TEXT_LENGTH) {
+      return textToDocument({
+        canonicalUri: input.canonicalUri,
+        content: extractedText,
+        extractor: 'readability',
+        metadata: {
+          extractionStrategy: 'deterministic',
+          fallbackUsed: false,
+        },
+        mimeType: input.mimeType,
+        sourceBlobId: input.sourceBlobId,
+        title: pickTitle(article?.title, documentTitle, input.title),
+      });
+    }
+
+    return fallbackWebPageToAi({
+      canonicalUri: input.canonicalUri,
+      deps: input.deps,
+      fallbackReason:
+        extractedText.length > 0 ? 'low_text_yield' : 'readability_failed',
+      html: input.html.slice(0, 120_000),
+      sourceBlobId: input.sourceBlobId,
+      title: pickTitle(article?.title, documentTitle, input.title),
+    });
+  } catch {
+    return fallbackWebPageToAi({
+      canonicalUri: input.canonicalUri,
+      deps: input.deps,
+      fallbackReason: 'readability_failed',
+      html: input.html.slice(0, 120_000),
+      sourceBlobId: input.sourceBlobId,
+      title: input.title,
+    });
+  }
+}
+
+async function extractWebPageSnapshotDocument(
+  job: IngestionJobForExtraction,
+  deps: ExtractSourceDeps,
+  canonicalUri: string,
+) {
+  if (!job.sourceBlobId || !job.sourceBlobObjectKey) {
+    throw new IngestionPipelineError(
+      'SOURCE_BLOB_REQUIRED',
+      'Web snapshot extraction requires a source blob object key.',
+    );
+  }
+
+  if (!isHtmlMimeType(job.sourceBlobContentType ?? job.mimeType)) {
+    throw new IngestionPipelineError(
+      'UNSUPPORTED_FILE_TYPE',
+      'Web page snapshots must be stored as HTML documents.',
+      {
+        mimeType: job.sourceBlobContentType ?? job.mimeType ?? null,
+        sourceBlobId: job.sourceBlobId,
+      },
+    );
+  }
+
+  if (
+    typeof job.sourceBlobByteSize === 'bigint' &&
+    job.sourceBlobByteSize > BigInt(MAX_EXTRACTION_BLOB_BYTES)
+  ) {
+    throw new IngestionPipelineError(
+      'SOURCE_BLOB_TOO_LARGE',
+      'Web snapshot HTML is too large for the current in-memory extraction pipeline.',
+      {
+        byteSize: job.sourceBlobByteSize.toString(),
+        maxBytes: MAX_EXTRACTION_BLOB_BYTES,
+        sourceBlobId: job.sourceBlobId,
+      },
+    );
+  }
+
+  let bytes: Uint8Array;
+
+  try {
+    bytes = await deps.readObjectBytes({
+      maxBytes: MAX_EXTRACTION_BLOB_BYTES,
+      objectKey: job.sourceBlobObjectKey,
+    });
+  } catch (error) {
+    if (error instanceof StorageObjectTooLargeError) {
+      throw new IngestionPipelineError(
+        'SOURCE_BLOB_TOO_LARGE',
+        'Web snapshot HTML is too large for the current in-memory extraction pipeline.',
+        {
+          byteSize: error.byteSize.toString(),
+          maxBytes: error.maxBytes,
+          objectKey: error.objectKey,
+          sourceBlobId: job.sourceBlobId,
+        },
+      );
+    }
+
+    throw error;
+  }
+
+  return extractHtmlDocument({
+    canonicalUri,
+    deps,
+    html: new TextDecoder().decode(bytes),
+    mimeType: job.sourceBlobContentType ?? job.mimeType ?? 'text/html',
+    sourceBlobId: job.sourceBlobId,
+    title: job.sourceTitle,
+  });
+}
+
 function isRedirectStatus(status: number) {
   return [301, 302, 303, 307, 308].includes(status);
 }
@@ -711,6 +835,11 @@ async function extractWebPageDocument(
   }
 
   const safeSubmittedUrl = await deps.assertSafeWebUrl(submittedUrl);
+
+  if (job.sourceBlobObjectKey && job.sourceBlobId) {
+    return extractWebPageSnapshotDocument(job, deps, safeSubmittedUrl);
+  }
+
   let response: Response;
   let finalUrl = safeSubmittedUrl;
 
@@ -730,6 +859,7 @@ async function extractWebPageDocument(
       canonicalUri: safeSubmittedUrl,
       deps,
       fallbackReason: 'fetch_failed',
+      sourceBlobId: null,
       title: job.sourceTitle,
     });
   }
@@ -739,6 +869,7 @@ async function extractWebPageDocument(
       canonicalUri: finalUrl,
       deps,
       fallbackReason: 'fetch_failed',
+      sourceBlobId: null,
       title: job.sourceTitle,
     });
   }
@@ -760,46 +891,16 @@ async function extractWebPageDocument(
     );
   }
 
-  const html = new TextDecoder().decode(bytes);
-  try {
-    const { article, documentTitle } = await extractReadableHtml(
-      html,
-      finalUrl,
-    );
-    const extractedText = normalizeText(article?.textContent ?? '');
+  const resolvedHtmlMimeType = mimeType ?? 'text/html';
 
-    if (extractedText.length >= MIN_READABILITY_TEXT_LENGTH) {
-      return textToDocument({
-        canonicalUri: finalUrl,
-        content: extractedText,
-        extractor: 'readability',
-        metadata: {
-          extractionStrategy: 'deterministic',
-          fallbackUsed: false,
-        },
-        mimeType,
-        sourceBlobId: null,
-        title: pickTitle(article?.title, documentTitle, job.sourceTitle),
-      });
-    }
-
-    return fallbackWebPageToAi({
-      canonicalUri: finalUrl,
-      deps,
-      fallbackReason:
-        extractedText.length > 0 ? 'low_text_yield' : 'readability_failed',
-      html: html.slice(0, 120_000),
-      title: pickTitle(article?.title, documentTitle, job.sourceTitle),
-    });
-  } catch {
-    return fallbackWebPageToAi({
-      canonicalUri: finalUrl,
-      deps,
-      fallbackReason: 'readability_failed',
-      html: html.slice(0, 120_000),
-      title: job.sourceTitle,
-    });
-  }
+  return extractHtmlDocument({
+    canonicalUri: finalUrl,
+    deps,
+    html: new TextDecoder().decode(bytes),
+    mimeType: resolvedHtmlMimeType,
+    sourceBlobId: null,
+    title: job.sourceTitle,
+  });
 }
 
 export async function extractSourceDocument(

@@ -4,6 +4,16 @@ import { BucketEncryption } from 'aws-cdk-lib/aws-s3';
 import { Bucket, type StackContext, toCdkDuration, use } from 'sst/constructs';
 import { PermissionStack } from './permission-stack';
 
+const CHROME_EXTENSION_ID_PATTERN = /^[a-z]{32}$/u;
+
+function getAllowedChromeExtensionOrigins() {
+  return (process.env.CHROME_EXTENSION_IDS ?? '')
+    .split(',')
+    .map((value) => value.trim())
+    .filter((value) => CHROME_EXTENSION_ID_PATTERN.test(value))
+    .map((extensionId) => `chrome-extension://${extensionId}`);
+}
+
 export function BucketStack({ stack }: StackContext) {
   const { oidcRole } = use(PermissionStack);
 
@@ -17,6 +27,7 @@ export function BucketStack({ stack }: StackContext) {
           'http://localhost:3000',
           'https://memoryapp.ai',
           'https://*.vercel.app',
+          ...getAllowedChromeExtensionOrigins(),
         ],
       },
     ],

@@ -2,15 +2,27 @@ import Link from 'next/link';
 import { redirect } from 'next/navigation';
 
 import { GoogleSignInButton } from '@/components/auth/google-sign-in-button';
+import { sanitizeAppCallbackPath } from '@/lib/server/auth/callback';
 import { getSession } from '@/lib/server/auth/session';
 
 export const dynamic = 'force-dynamic';
 
-export default async function LoginPage() {
+type LoginPageProps = {
+  searchParams: Promise<{
+    callback?: string | string[];
+  }>;
+};
+
+export default async function LoginPage({ searchParams }: LoginPageProps) {
   const session = await getSession();
+  const resolvedSearchParams = await searchParams;
+  const callbackValue = Array.isArray(resolvedSearchParams.callback)
+    ? resolvedSearchParams.callback[0]
+    : resolvedSearchParams.callback;
+  const callbackURL = sanitizeAppCallbackPath(callbackValue) ?? '/app';
 
   if (session) {
-    redirect('/app');
+    redirect(callbackURL);
   }
 
   return (
@@ -33,7 +45,7 @@ export default async function LoginPage() {
         </div>
 
         <div className='flex flex-col gap-4 rounded-3xl border border-slate-200/80 bg-white/90 p-6'>
-          <GoogleSignInButton />
+          <GoogleSignInButton callbackURL={callbackURL} />
           <p className='text-sm leading-7 text-slate-600'>
             By continuing, you’ll authenticate with Google and land in the
             protected <code>/app</code> shell.

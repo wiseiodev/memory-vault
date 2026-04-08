@@ -420,6 +420,7 @@ export async function processIngestionJob(
       deps.repository.completeJob({
         finishedAt: deps.now(),
         jobId: job.jobId,
+        sourceBlobId,
         sourceItemId,
       }),
     );

@@ -15,6 +15,68 @@ import type { PersistedSegment } from './types';
 
 type Db = ReturnType<typeof getDb>;
 
+type SourceBlobRecord = {
+  sourceBlobByteSize: bigint | null;
+  sourceBlobContentType: string | null;
+  sourceBlobId: string;
+  sourceBlobObjectKey: string | null;
+};
+
+function getSnapshotSourceBlobId(
+  payload: Record<string, unknown> | null | undefined,
+) {
+  const value = payload?.snapshotSourceBlobId;
+  return typeof value === 'string' && value.length > 0 ? value : null;
+}
+
+async function findActiveSourceBlob(
+  db: Pick<Db, 'select'>,
+  input: {
+    snapshotSourceBlobId?: string | null;
+    sourceItemId: string;
+  },
+): Promise<SourceBlobRecord | null> {
+  if (input.snapshotSourceBlobId) {
+    const [blob] = await db
+      .select({
+        sourceBlobByteSize: sourceBlobs.byteSize,
+        sourceBlobContentType: sourceBlobs.contentType,
+        sourceBlobId: sourceBlobs.id,
+        sourceBlobObjectKey: sourceBlobs.objectKey,
+      })
+      .from(sourceBlobs)
+      .where(
+        and(
+          eq(sourceBlobs.id, input.snapshotSourceBlobId),
+          eq(sourceBlobs.sourceItemId, input.sourceItemId),
+          isNull(sourceBlobs.deletedAt),
+        ),
+      )
+      .limit(1);
+
+    return blob ?? null;
+  }
+
+  const [blob] = await db
+    .select({
+      sourceBlobByteSize: sourceBlobs.byteSize,
+      sourceBlobContentType: sourceBlobs.contentType,
+      sourceBlobId: sourceBlobs.id,
+      sourceBlobObjectKey: sourceBlobs.objectKey,
+    })
+    .from(sourceBlobs)
+    .where(
+      and(
+        eq(sourceBlobs.sourceItemId, input.sourceItemId),
+        isNull(sourceBlobs.deletedAt),
+      ),
+    )
+    .orderBy(desc(sourceBlobs.uploadedAt), desc(sourceBlobs.createdAt))
+    .limit(1);
+
+  return blob ?? null;
+}
+
 export type IngestionJobStage =
   | 'complete'
   | 'embed'
@@ -26,6 +88,7 @@ export type IngestionRepository = {
   completeJob(input: {
     finishedAt: Date;
     jobId: string;
+    sourceBlobId?: string | null;
     sourceItemId: string;
   }): Promise<void>;
   createJob(input: {
@@ -173,10 +236,15 @@ export function createIngestionRepository(
             updatedAt: input.finishedAt,
           })
           .where(
-            and(
-              eq(sourceBlobs.sourceItemId, input.sourceItemId),
-              isNull(sourceBlobs.deletedAt),
-            ),
+            input.sourceBlobId
+              ? and(
+                  eq(sourceBlobs.id, input.sourceBlobId),
+                  isNull(sourceBlobs.deletedAt),
+                )
+              : and(
+                  eq(sourceBlobs.sourceItemId, input.sourceItemId),
+                  isNull(sourceBlobs.deletedAt),
+                ),
           );
 
         await tx
@@ -257,10 +325,6 @@ export function createIngestionRepository(
           maxAttempts: ingestionJobs.maxAttempts,
           mimeType: sourceItems.mimeType,
           payload: ingestionJobs.payload,
-          sourceBlobContentType: sourceBlobs.contentType,
-          sourceBlobId: sourceBlobs.id,
-          sourceBlobObjectKey: sourceBlobs.objectKey,
-          sourceBlobByteSize: sourceBlobs.byteSize,
           sourceItemId: ingestionJobs.sourceItemId,
           sourceKind: sourceItems.kind,
           sourceMetadata: sourceItems.metadata,
@@ -271,19 +335,20 @@ export function createIngestionRepository(
         })
         .from(ingestionJobs)
         .leftJoin(sourceItems, eq(ingestionJobs.sourceItemId, sourceItems.id))
-        .leftJoin(
-          sourceBlobs,
-          and(
-            eq(sourceBlobs.sourceItemId, sourceItems.id),
-            isNull(sourceBlobs.deletedAt),
-          ),
-        )
         .where(eq(ingestionJobs.id, input.jobId))
         .limit(1);
 
       if (!job) {
         return null;
       }
+
+      const snapshotSourceBlobId = getSnapshotSourceBlobId(job.payload);
+      const sourceBlob = job.sourceItemId
+        ? await findActiveSourceBlob(db, {
+            snapshotSourceBlobId,
+            sourceItemId: job.sourceItemId,
+          })
+        : null;
 
       return {
         attemptCount: job.attemptCount,
@@ -292,10 +357,10 @@ export function createIngestionRepository(
         maxAttempts: job.maxAttempts,
         mimeType: job.mimeType,
         payload: job.payload ?? {},
-        sourceBlobContentType: job.sourceBlobContentType,
-        sourceBlobId: job.sourceBlobId ?? null,
-        sourceBlobObjectKey: job.sourceBlobObjectKey ?? null,
-        sourceBlobByteSize: job.sourceBlobByteSize ?? null,
+        sourceBlobContentType: sourceBlob?.sourceBlobContentType ?? null,
+        sourceBlobId: sourceBlob?.sourceBlobId ?? null,
+        sourceBlobObjectKey: sourceBlob?.sourceBlobObjectKey ?? null,
+        sourceBlobByteSize: sourceBlob?.sourceBlobByteSize ?? null,
         sourceItemId: job.sourceItemId ?? null,
         sourceKind:
           job.sourceKind === 'file' ||
@@ -454,19 +519,12 @@ export function createIngestionRepository(
       return db.transaction(async (tx) => {
         const [job] = await tx
           .select({
+            payload: ingestionJobs.payload,
             previousStatus: ingestionJobs.status,
-            sourceBlobId: sourceBlobs.id,
             sourceItemId: ingestionJobs.sourceItemId,
           })
           .from(ingestionJobs)
           .innerJoin(spaces, eq(ingestionJobs.spaceId, spaces.id))
-          .leftJoin(
-            sourceBlobs,
-            and(
-              eq(sourceBlobs.sourceItemId, ingestionJobs.sourceItemId),
-              isNull(sourceBlobs.deletedAt),
-            ),
-          )
           .where(
             and(
               eq(ingestionJobs.id, input.jobId),
@@ -481,12 +539,20 @@ export function createIngestionRepository(
           return null;
         }
 
+        const snapshotSourceBlobId = getSnapshotSourceBlobId(job.payload);
+        const sourceBlob = job.sourceItemId
+          ? await findActiveSourceBlob(tx, {
+              snapshotSourceBlobId,
+              sourceItemId: job.sourceItemId,
+            })
+          : null;
+
         if (job.previousStatus !== 'failed') {
           return {
             outcome: 'rejected' as const,
             jobId: input.jobId,
             previousStatus: job.previousStatus,
-            sourceBlobId: job.sourceBlobId ?? null,
+            sourceBlobId: sourceBlob?.sourceBlobId ?? null,
             sourceItemId: job.sourceItemId ?? null,
             stage: 'extract' as const,
             status: 'rejected' as const,
@@ -521,7 +587,7 @@ export function createIngestionRepository(
             outcome: 'rejected' as const,
             jobId: input.jobId,
             previousStatus: job.previousStatus,
-            sourceBlobId: job.sourceBlobId ?? null,
+            sourceBlobId: sourceBlob?.sourceBlobId ?? null,
             sourceItemId: job.sourceItemId ?? null,
             stage: 'extract' as const,
             status: 'rejected' as const,
@@ -538,21 +604,21 @@ export function createIngestionRepository(
             .where(eq(sourceItems.id, job.sourceItemId));
         }
 
-        if (job.sourceBlobId) {
+        if (sourceBlob?.sourceBlobId) {
           await tx
             .update(sourceBlobs)
             .set({
               extractionStatus: 'pending',
               updatedAt: input.queuedAt,
             })
-            .where(eq(sourceBlobs.id, job.sourceBlobId));
+            .where(eq(sourceBlobs.id, sourceBlob.sourceBlobId));
         }
 
         return {
           outcome: 'queued' as const,
           jobId: updatedJob.jobId,
           previousStatus: job.previousStatus,
-          sourceBlobId: job.sourceBlobId ?? null,
+          sourceBlobId: sourceBlob?.sourceBlobId ?? null,
           sourceItemId: job.sourceItemId ?? null,
           stage: updatedJob.stage,
           status: 'queued',
@@ -582,6 +648,7 @@ export function createIngestionRepository(
           )
           .returning({
             jobId: ingestionJobs.id,
+            payload: ingestionJobs.payload,
             sourceItemId: ingestionJobs.sourceItemId,
           });
 
@@ -598,21 +665,21 @@ export function createIngestionRepository(
             })
             .where(eq(sourceItems.id, job.sourceItemId));
 
-          const [blob] = await tx
-            .update(sourceBlobs)
-            .set({
-              extractionStatus: 'processing',
-              updatedAt: input.startedAt,
-            })
-            .where(
-              and(
-                eq(sourceBlobs.sourceItemId, job.sourceItemId),
-                isNull(sourceBlobs.deletedAt),
-              ),
-            )
-            .returning({
-              sourceBlobId: sourceBlobs.id,
-            });
+          const snapshotSourceBlobId = getSnapshotSourceBlobId(job.payload);
+          const blob = await findActiveSourceBlob(tx, {
+            snapshotSourceBlobId,
+            sourceItemId: job.sourceItemId,
+          });
+
+          if (blob) {
+            await tx
+              .update(sourceBlobs)
+              .set({
+                extractionStatus: 'processing',
+                updatedAt: input.startedAt,
+              })
+              .where(eq(sourceBlobs.id, blob.sourceBlobId));
+          }
 
           return {
             jobId: job.jobId,

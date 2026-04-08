@@ -266,6 +266,7 @@ describe('processIngestionJob', () => {
     expect(repository.completeJob).toHaveBeenCalledWith({
       finishedAt: new Date('2026-03-29T01:00:00.000Z'),
       jobId: 'job_123',
+      sourceBlobId: null,
       sourceItemId: 'src_123',
     });
     expect(publishJobUpdate).toHaveBeenNthCalledWith(1, {

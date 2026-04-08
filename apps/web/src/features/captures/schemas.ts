@@ -1,3 +1,12 @@
+import {
+  abandonWebCaptureInput,
+  abandonWebCaptureOutput,
+  beginWebCaptureInput,
+  beginWebCaptureOutput,
+  completeWebCaptureInput,
+  createExtensionNoteInput,
+  extensionCaptureSummary,
+} from '@memory-vault/extension-contract';
 import { z } from 'zod';
 
 export const createNoteCaptureInput = z.object({
@@ -25,3 +34,13 @@ export const captureSummaryOutput = z.object({
   spaceId: z.string(),
   status: z.literal('pending'),
 });
+
+export {
+  abandonWebCaptureInput,
+  abandonWebCaptureOutput,
+  beginWebCaptureInput,
+  beginWebCaptureOutput,
+  completeWebCaptureInput,
+  createExtensionNoteInput,
+  extensionCaptureSummary as extensionCaptureSummaryOutput,
+};
