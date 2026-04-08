@@ -3,6 +3,7 @@ import 'server-only';
 import { createHmac, timingSafeEqual } from 'node:crypto';
 
 import { extensionConnectStartParams } from '@memory-vault/extension-contract';
+import { z } from 'zod';
 
 const CONNECT_PAYLOAD_TTL_MS = 10 * 60 * 1000;
 const CONNECT_PAYLOAD_VERSION = 1;
@@ -17,6 +18,11 @@ type SignedConnectPayload = {
   state: string;
   version: number;
 };
+
+const signedConnectPayloadSchema = extensionConnectStartParams.extend({
+  issuedAt: z.number().int(),
+  version: z.literal(CONNECT_PAYLOAD_VERSION),
+});
 
 function getSigningSecret() {
   const secret = process.env.BETTER_AUTH_SECRET?.trim();
@@ -74,21 +80,18 @@ export function verifySignedConnectPayload(
   try {
     const parsed = JSON.parse(
       Buffer.from(serialized, 'base64url').toString('utf8'),
-    ) as SignedConnectPayload;
-    const validated = extensionConnectStartParams.safeParse(parsed);
+    );
+    const validated = signedConnectPayloadSchema.safeParse(parsed);
 
     if (!validated.success) {
       return null;
     }
 
-    if (
-      parsed.version !== CONNECT_PAYLOAD_VERSION ||
-      Date.now() - parsed.issuedAt > CONNECT_PAYLOAD_TTL_MS
-    ) {
+    if (Date.now() - validated.data.issuedAt > CONNECT_PAYLOAD_TTL_MS) {
       return null;
     }
 
-    return parsed;
+    return validated.data;
   } catch {
     return null;
   }

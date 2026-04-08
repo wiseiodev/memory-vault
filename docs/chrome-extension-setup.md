@@ -44,7 +44,7 @@ apps/extension/dist/chrome-mv3
 4. Select:
 
 ```text
-/Users/wise/dev/memories/apps/extension/dist/chrome-mv3
+<repo>/apps/extension/dist/chrome-mv3
 ```
 
 Once Chrome loads it, copy the generated extension ID from the extension card.
