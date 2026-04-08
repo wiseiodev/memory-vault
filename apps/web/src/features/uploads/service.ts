@@ -47,6 +47,12 @@ type ServiceDeps = {
   };
 };
 
+type CreateDownloadUrlInput = {
+  contentType?: string;
+  filename?: string;
+  objectKey: string;
+};
+
 export type UploadListItem = {
   byteSize: string | null;
   contentType: string | null;
@@ -144,6 +150,15 @@ export async function reserveUpload(
     }
     throw error;
   }
+}
+
+export async function createDownloadUrl(
+  input: CreateDownloadUrlInput,
+  deps: Pick<ServiceDeps, 'createPresignedDownload'> = {
+    createPresignedDownload,
+  },
+) {
+  return (deps.createPresignedDownload ?? createPresignedDownload)(input);
 }
 
 export async function completeUpload(

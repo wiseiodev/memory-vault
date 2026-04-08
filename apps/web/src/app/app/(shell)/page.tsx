@@ -1,9 +1,11 @@
 import type { Metadata } from 'next';
+import Link from 'next/link';
 import { CaptureVerificationCard } from '@/features/captures';
 import { DeviceTokenListCard } from '@/features/device-tokens';
 import { IngestionJobsCardLive } from '@/features/ingestion';
 import { UploadListCard, UploadVerificationCard } from '@/features/uploads';
 import { requireSession } from '@/lib/server/auth/session';
+import { getExtensionReleaseVersion } from '@/lib/server/extensions/release';
 import { rpc } from '@/rpc/client';
 
 export const metadata: Metadata = {
@@ -15,6 +17,7 @@ export const metadata: Metadata = {
 export default async function AppPage() {
   const session = await requireSession();
   const deviceTokens = await rpc.deviceTokens.list();
+  const extensionReleaseVersion = getExtensionReleaseVersion();
   const jobs = await rpc.ingestion.listRecent();
   const uploads = await rpc.uploads.list();
 
@@ -60,6 +63,27 @@ export default async function AppPage() {
           </p>
         </article>
       </div>
+
+      <article className='rounded-3xl border border-slate-200/80 bg-white/90 p-5'>
+        <h3 className='text-sm font-semibold uppercase tracking-[0.18em] text-slate-500'>
+          Chrome extension
+        </h3>
+        <p className='mt-3 text-sm leading-7 text-slate-700'>
+          Download the current production extension package directly from Memory
+          Vault while the Chrome Web Store review is pending.
+        </p>
+        <div className='mt-4 flex flex-wrap items-center gap-3'>
+          <Link
+            href='/app/extension/download'
+            className='inline-flex items-center justify-center rounded-full bg-slate-950 px-5 py-3 text-sm font-semibold text-white transition hover:bg-slate-800'
+          >
+            Download extension zip
+          </Link>
+          <p className='text-sm text-slate-600'>
+            Version {extensionReleaseVersion}
+          </p>
+        </div>
+      </article>
 
       <CaptureVerificationCard />
       <DeviceTokenListCard deviceTokens={deviceTokens} />

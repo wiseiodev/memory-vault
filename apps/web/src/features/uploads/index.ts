@@ -6,3 +6,6 @@ export { UploadVerificationCard } from './components/upload-verification-card';
 
 // Types (safe to import anywhere)
 export type { UploadListItem } from './service';
+
+// Server-safe feature API
+export { createDownloadUrl } from './service';

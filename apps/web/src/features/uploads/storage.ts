@@ -117,11 +117,19 @@ export async function createPresignedUpload(input: {
   };
 }
 
-export async function createPresignedDownload(input: { objectKey: string }) {
+export async function createPresignedDownload(input: {
+  contentType?: string;
+  filename?: string;
+  objectKey: string;
+}) {
   const config = getStorageConfig();
   const command = new GetObjectCommand({
     Bucket: config.bucket,
     Key: input.objectKey,
+    ResponseContentDisposition: input.filename
+      ? `attachment; filename="${input.filename}"`
+      : undefined,
+    ResponseContentType: input.contentType ?? undefined,
   });
 
   return getSignedUrl(getS3Client(), command, {
