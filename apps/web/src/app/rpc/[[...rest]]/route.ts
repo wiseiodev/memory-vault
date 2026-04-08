@@ -1,6 +1,10 @@
 import { ORPCError, onError } from '@orpc/server';
 import { RPCHandler } from '@orpc/server/fetch';
 import { getRequestLogger, withEvlog } from '@/lib/evlog';
+import {
+  applyExtensionCorsHeaders,
+  getExtensionCorsHeaders,
+} from '@/lib/server/extensions/cors';
 import { appRouter } from '@/rpc/router';
 
 export const runtime = 'nodejs';
@@ -31,13 +35,26 @@ const handler = new RPCHandler(appRouter, {
 });
 
 const handleRequest = withEvlog(async (request: Request) => {
+  if (request.method === 'OPTIONS') {
+    const corsHeaders = getExtensionCorsHeaders(request.headers.get('origin'));
+
+    return new Response(null, {
+      headers: corsHeaders ?? {},
+      status: corsHeaders ? 204 : 403,
+    });
+  }
+
   const { response } = await handler.handle(request, {
     prefix: '/rpc',
     context: { headers: request.headers },
   });
 
-  return response ?? new Response('Not found', { status: 404 });
+  return applyExtensionCorsHeaders(
+    response ?? new Response('Not found', { status: 404 }),
+    request.headers.get('origin'),
+  );
 });
 
 export const GET = handleRequest;
+export const OPTIONS = handleRequest;
 export const POST = handleRequest;

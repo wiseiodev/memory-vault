@@ -1,0 +1,9 @@
+{
+  "extends": "../../packages/tsconfig/base.json",
+  "compilerOptions": {
+    "lib": ["DOM", "DOM.Iterable", "ES2022", "WebWorker"],
+    "types": ["chrome"]
+  },
+  "include": ["entrypoints/**/*.ts", "src/**/*.ts", "wxt-env.d.ts"],
+  "exclude": ["node_modules", "dist", ".output"]
+}

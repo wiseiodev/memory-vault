@@ -12,6 +12,7 @@ out
 # builds
 dist
 coverage
+.wxt
 
 # environment
 .env

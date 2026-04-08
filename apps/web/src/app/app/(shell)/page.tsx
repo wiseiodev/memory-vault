@@ -1,5 +1,6 @@
 import type { Metadata } from 'next';
 import { CaptureVerificationCard } from '@/features/captures';
+import { DeviceTokenListCard } from '@/features/device-tokens';
 import { IngestionJobsCardLive } from '@/features/ingestion';
 import { UploadListCard, UploadVerificationCard } from '@/features/uploads';
 import { requireSession } from '@/lib/server/auth/session';
@@ -13,6 +14,7 @@ export const metadata: Metadata = {
 
 export default async function AppPage() {
   const session = await requireSession();
+  const deviceTokens = await rpc.deviceTokens.list();
   const jobs = await rpc.ingestion.listRecent();
   const uploads = await rpc.uploads.list();
 
@@ -60,6 +62,7 @@ export default async function AppPage() {
       </div>
 
       <CaptureVerificationCard />
+      <DeviceTokenListCard deviceTokens={deviceTokens} />
       <IngestionJobsCardLive initialJobs={jobs} userId={session.user.id} />
       <UploadVerificationCard />
       <UploadListCard uploads={uploads} />

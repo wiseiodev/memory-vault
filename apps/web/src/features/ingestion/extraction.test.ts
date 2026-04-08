@@ -82,6 +82,72 @@ describe('extractSourceDocument', () => {
     expect(deps.extractHardWebPageWithAi).not.toHaveBeenCalled();
   });
 
+  it('prefers uploaded HTML snapshots over a live fetch for web captures', async () => {
+    const deps = createDeps();
+    deps.readObjectBytes.mockResolvedValue(
+      new TextEncoder().encode(`
+        <html>
+          <head><title>Saved snapshot</title></head>
+          <body>
+            <article>
+              <p>
+                This snapshot contains enough text to stay on the deterministic
+                extraction path without refetching the origin URL.
+              </p>
+              <p>
+                The ingestion worker should read this uploaded HTML blob first
+                and avoid the network entirely for extension web captures.
+              </p>
+            </article>
+          </body>
+        </html>
+      `),
+    );
+
+    const document = await extractSourceDocument(
+      createJob({
+        canonicalUri: 'https://example.com/snapshot',
+        sourceBlobByteSize: BigInt(512),
+        sourceBlobContentType: 'text/html',
+        sourceBlobId: 'blob_123',
+        sourceBlobObjectKey:
+          'spaces/spc_123/sources/src_123/blobs/blob_123/page.html',
+        sourceKind: 'web_page',
+      }),
+      deps,
+    );
+
+    expect(deps.readObjectBytes).toHaveBeenCalledWith({
+      maxBytes: 25 * 1024 * 1024,
+      objectKey: 'spaces/spc_123/sources/src_123/blobs/blob_123/page.html',
+    });
+    expect(deps.fetch).not.toHaveBeenCalled();
+    expect(document.sourceBlobId).toBe('blob_123');
+    expect(document.title).toBe('Saved snapshot');
+  });
+
+  it('fails instead of live-fetching when a linked snapshot blob cannot be read', async () => {
+    const deps = createDeps();
+    deps.readObjectBytes.mockRejectedValue(new Error('missing object'));
+
+    await expect(
+      extractSourceDocument(
+        createJob({
+          canonicalUri: 'https://example.com/snapshot',
+          sourceBlobByteSize: BigInt(512),
+          sourceBlobContentType: 'text/html',
+          sourceBlobId: 'blob_123',
+          sourceBlobObjectKey:
+            'spaces/spc_123/sources/src_123/blobs/blob_123/page.html',
+          sourceKind: 'web_page',
+        }),
+        deps,
+      ),
+    ).rejects.toThrow('missing object');
+
+    expect(deps.fetch).not.toHaveBeenCalled();
+  });
+
   it('treats XHTML responses as web pages', async () => {
     const deps = createDeps();
     deps.fetch.mockResolvedValue(
