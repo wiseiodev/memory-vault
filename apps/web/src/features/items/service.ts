@@ -1,0 +1,124 @@
+import 'server-only';
+
+import { ORPCError } from '@orpc/server';
+
+import { createItemRepository, type ItemRepository } from './repository';
+import type { ItemDetail, ItemListItem } from './schemas';
+
+const DEFAULT_LIST_LIMIT = 50;
+const PREVIEW_TEXT_MAX_CHARS = 240;
+
+type ListItemsInput = {
+  limit?: number;
+  spaceId?: string;
+  userId: string;
+};
+
+type GetItemInput = {
+  sourceItemId: string;
+  userId: string;
+};
+
+type Deps = {
+  repository: ItemRepository;
+};
+
+function truncatePreview(value: string | null | undefined) {
+  if (!value) {
+    return null;
+  }
+
+  const trimmed = value.replaceAll(/\s+/g, ' ').trim();
+
+  if (!trimmed) {
+    return null;
+  }
+
+  if (trimmed.length <= PREVIEW_TEXT_MAX_CHARS) {
+    return trimmed;
+  }
+
+  return `${trimmed.slice(0, PREVIEW_TEXT_MAX_CHARS - 1).trimEnd()}…`;
+}
+
+function derivePreview(metadata: Record<string, unknown>) {
+  const noteBody = metadata.noteBody;
+  if (typeof noteBody === 'string' && noteBody.trim().length > 0) {
+    return truncatePreview(noteBody);
+  }
+
+  const selectedText = metadata.selectedText;
+  if (typeof selectedText === 'string' && selectedText.trim().length > 0) {
+    return truncatePreview(selectedText);
+  }
+
+  return null;
+}
+
+export async function listItems(
+  input: ListItemsInput,
+  deps: Deps = { repository: createItemRepository() },
+): Promise<ItemListItem[]> {
+  const rows = await deps.repository.listOwnedItems({
+    limit: input.limit ?? DEFAULT_LIST_LIMIT,
+    spaceId: input.spaceId,
+    userId: input.userId,
+  });
+
+  return rows.map((row) => ({
+    canonicalUri: row.canonicalUri,
+    capturedAt: row.capturedAt,
+    createdAt: row.createdAt,
+    kind: row.kind,
+    memoryCount: row.memoryCount,
+    previewText: derivePreview(row.metadata),
+    segmentCount: row.segmentCount,
+    sourceItemId: row.sourceItemId,
+    spaceId: row.spaceId,
+    spaceName: row.spaceName,
+    status: row.status,
+    title: row.title,
+  }));
+}
+
+export async function getItem(
+  input: GetItemInput,
+  deps: Deps = { repository: createItemRepository() },
+): Promise<ItemDetail> {
+  const row = await deps.repository.getOwnedItem(input);
+
+  if (!row) {
+    throw new ORPCError('NOT_FOUND', {
+      message: 'Source item was not found.',
+    });
+  }
+
+  return {
+    blob: row.blob
+      ? {
+          byteSize: row.blob.byteSize?.toString() ?? null,
+          contentType: row.blob.contentType,
+          objectKey: row.blob.objectKey,
+          sourceBlobId: row.blob.sourceBlobId,
+          uploadedAt: row.blob.uploadedAt,
+        }
+      : null,
+    canonicalUri: row.canonicalUri,
+    capturedAt: row.capturedAt,
+    createdAt: row.createdAt,
+    kind: row.kind,
+    memories: row.memories,
+    memoryCount: row.memoryCount,
+    metadata: row.metadata,
+    mimeType: row.mimeType,
+    previewText: derivePreview(row.metadata),
+    segmentCount: row.segmentCount,
+    segments: row.segments,
+    sourceItemId: row.sourceItemId,
+    spaceId: row.spaceId,
+    spaceName: row.spaceName,
+    status: row.status,
+    title: row.title,
+    updatedAt: row.updatedAt,
+  };
+}

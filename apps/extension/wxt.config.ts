@@ -39,7 +39,15 @@ function buildWebAccessibleResources() {
   ];
 }
 
+const EXTENSION_DEV_PORT = 3010;
+
 export default defineConfig({
+  dev: {
+    server: {
+      port: EXTENSION_DEV_PORT,
+      origin: `http://localhost:${EXTENSION_DEV_PORT}`,
+    },
+  },
   manifest: {
     action: {
       default_popup: 'popup.html',

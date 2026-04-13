@@ -5,7 +5,7 @@ import type {
   FusedRetrievalCandidate,
   RetrievalSourceKind,
 } from '@/features/retrieval/types';
-import { generateGroundedAnswer, repairGroundedAnswer } from '@/lib/ai/query';
+import { repairGroundedAnswer, streamGroundedAnswer } from '@/lib/ai/query';
 import { getRequestLogger } from '@/lib/evlog';
 import type { AskQueryEvent } from './schemas';
 
@@ -15,7 +15,6 @@ const MAX_PROMPT_QUOTE_CHARS = 600;
 const MIN_GROUNDED_BUNDLES = 2;
 const MIN_TOP_RERANK_SCORE = 0.65;
 const MIN_TOTAL_QUOTE_CHARS = 240;
-const ANSWER_DELTA_CHARS = 200;
 const ABSTAIN_MESSAGE = 'Unable to answer from the available evidence.';
 
 type AskQueryInput = {
@@ -59,20 +58,6 @@ function truncateText(value: string, maxLength: number) {
   }
 
   return `${trimmed.slice(0, Math.max(0, maxLength - 1)).trimEnd()}...`;
-}
-
-function splitAnswer(answerMarkdown: string) {
-  const chunks: string[] = [];
-
-  for (
-    let index = 0;
-    index < answerMarkdown.length;
-    index += ANSWER_DELTA_CHARS
-  ) {
-    chunks.push(answerMarkdown.slice(index, index + ANSWER_DELTA_CHARS));
-  }
-
-  return chunks;
 }
 
 function extractCitationIds(answerMarkdown: string) {
@@ -231,7 +216,7 @@ export async function* askQuery(
   });
 
   yield {
-    phase: 'normalizing',
+    phase: 'retrieving',
     type: 'status',
   };
 
@@ -251,24 +236,6 @@ export async function* askQuery(
     primitiveCounts: evidence.retrievalMeta.primitiveCounts,
     rerankDegraded: evidence.retrievalMeta.rerankDegraded,
   });
-
-  yield {
-    counts: {
-      candidateCount: evidence.retrievalMeta.fusedCandidateCount,
-      memoryHitsUsed: evidence.retrievalMeta.memoryHitsUsed,
-    },
-    phase: 'retrieving',
-    type: 'status',
-  };
-
-  yield {
-    counts: {
-      candidateCount: evidence.bundles.length,
-      memoryHitsUsed: evidence.retrievalMeta.memoryHitsUsed,
-    },
-    phase: 'reranking',
-    type: 'status',
-  };
 
   const preparedCitations = applyPromptBudget(
     prepareCitations(evidence.bundles),
@@ -324,11 +291,26 @@ export async function* askQuery(
   const allowedCitationIds = preparedCitations.map(
     (citation) => citation.citationId,
   );
-  const answer = await generateGroundedAnswer({
+
+  const stream = streamGroundedAnswer({
     bundles: promptBundles,
     question: input.question,
   });
-  let answerMarkdown = answer.answerMarkdown;
+
+  let streamedText = '';
+  for await (const delta of stream.textStream) {
+    if (!delta) {
+      continue;
+    }
+
+    streamedText += delta;
+    yield {
+      text: delta,
+      type: 'answer_delta',
+    };
+  }
+
+  let answerMarkdown = (await stream.text).trim() || streamedText.trim();
 
   if (isAnswerValidationFailure(answerMarkdown, allowedCitationIds)) {
     const repaired = await repairGroundedAnswer({
@@ -378,16 +360,12 @@ export async function* askQuery(
     return citedIdSet.has(citation.citationId);
   });
 
-  for (const chunk of splitAnswer(answerMarkdown)) {
-    yield {
-      text: chunk,
-      type: 'answer_delta',
-    };
-  }
+  const responseModel =
+    (await stream.response).modelId || stream.configuredModel;
 
   logger.info('query.ask.completed', {
     citedCitationCount: citedCitations.length,
-    responseModel: answer.responseModel,
+    responseModel,
   });
 
   yield {

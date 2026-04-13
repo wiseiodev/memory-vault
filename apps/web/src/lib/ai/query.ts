@@ -1,6 +1,6 @@
 import 'server-only';
 
-import { gateway, generateText, Output } from 'ai';
+import { gateway, generateText, Output, streamText } from 'ai';
 import { z } from 'zod';
 
 const normalizationSchema = z.object({
@@ -232,6 +232,61 @@ export async function generateGroundedAnswer(input: {
       primaryModel: ANSWER_PRIMARY_MODEL,
       result,
     }),
+  };
+}
+
+export function streamGroundedAnswer(input: {
+  bundles: Array<{
+    canonicalUri: string | null;
+    citationId: string;
+    exactQuotes: string[];
+    provenance: string;
+  }>;
+  question: string;
+}) {
+  readRequiredAiGatewayApiKey();
+  const providerRoute = buildProviderRoute({
+    fallbackModels: ANSWER_FALLBACK_MODELS,
+    primaryModel: ANSWER_PRIMARY_MODEL,
+  });
+
+  const result = streamText({
+    model: gateway(ANSWER_PRIMARY_MODEL),
+    providerOptions: baseProviderOptions({
+      fallbackModels: ANSWER_FALLBACK_MODELS,
+      metadata: {
+        capability: 'grounded-answer',
+      },
+    }),
+    temperature: 0,
+    messages: [
+      {
+        role: 'user',
+        content: [
+          {
+            type: 'text',
+            text: [
+              'Answer the user question using only the evidence bundles below.',
+              'Every substantive sentence must include one or more citations in [C#] form.',
+              'Use only citation ids that appear in the provided evidence.',
+              'If the evidence is insufficient, answer with exactly: Unable to answer from the available evidence.',
+              '',
+              `Question: ${input.question}`,
+              '',
+              `Evidence: ${JSON.stringify(input.bundles)}`,
+            ].join('\n'),
+          },
+        ],
+      },
+    ],
+  });
+
+  return {
+    configuredModel: ANSWER_PRIMARY_MODEL,
+    providerRoute,
+    response: result.response,
+    text: result.text,
+    textStream: result.textStream,
   };
 }
 
