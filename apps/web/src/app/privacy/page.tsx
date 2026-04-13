@@ -133,12 +133,30 @@ export default function PrivacyPage() {
 
           <section className='space-y-3'>
             <h2 className='text-xl font-semibold text-slate-950'>
-              Data retention
+              Data retention, export, and deletion
             </h2>
             <p>
-              We retain saved content and related account data for as long as it
-              is needed to provide the service, unless you request deletion or
-              the data must be removed for legal or security reasons.
+              You can download a full export of your Memory Vault from the
+              Settings page at any time. The export contains every space, source
+              item, extracted segment, promoted memory, citation, and device
+              token on your account, plus signed download links for the raw
+              blobs you have uploaded. It is structured so that your vault can
+              be reconstructed offline.
+            </p>
+            <p>
+              Deleting an individual source item removes its content, segments,
+              and derived memories from active retrieval immediately. Deleting
+              your entire account removes your user record, every space, source
+              item, segment, memory, citation, device token, and stored blob
+              from the live systems. Both operations apply to active retrieval
+              and the primary data store instantly.
+            </p>
+            <p>
+              Backup copies of deleted data may persist in managed Postgres
+              backups and S3 versioned storage for up to 30 days before being
+              removed. We do not use backups to restore deleted user content
+              except in the event of a production incident that affects the
+              integrity of the service as a whole.
             </p>
           </section>
 

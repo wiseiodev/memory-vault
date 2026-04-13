@@ -1,19 +1,19 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 const {
-  generateGroundedAnswer,
   logger,
   repairGroundedAnswer,
   retrieveGroundedEvidence,
+  streamGroundedAnswer,
 } = vi.hoisted(() => {
   return {
-    generateGroundedAnswer: vi.fn(),
     logger: {
       info: vi.fn(),
       warn: vi.fn(),
     },
     repairGroundedAnswer: vi.fn(),
     retrieveGroundedEvidence: vi.fn(),
+    streamGroundedAnswer: vi.fn(),
   };
 });
 
@@ -26,9 +26,25 @@ vi.mock('@/features/retrieval/service', () => ({
 }));
 
 vi.mock('@/lib/ai/query', () => ({
-  generateGroundedAnswer,
   repairGroundedAnswer,
+  streamGroundedAnswer,
 }));
+
+function mockStreamedAnswer(answerMarkdown: string) {
+  const chunks = [answerMarkdown];
+
+  return {
+    configuredModel: 'google/gemini-3.1-pro-preview',
+    providerRoute: ['google/gemini-3.1-pro-preview'],
+    response: Promise.resolve({ modelId: 'google/gemini-3.1-pro-preview' }),
+    text: Promise.resolve(answerMarkdown),
+    textStream: (async function* () {
+      for (const chunk of chunks) {
+        yield chunk;
+      }
+    })(),
+  };
+}
 
 import { askQuery } from './service';
 
@@ -65,11 +81,11 @@ async function collectEvents(generator: AsyncGenerator<unknown, void, void>) {
 
 describe('askQuery', () => {
   beforeEach(() => {
-    generateGroundedAnswer.mockReset();
     logger.info.mockReset();
     logger.warn.mockReset();
     repairGroundedAnswer.mockReset();
     retrieveGroundedEvidence.mockReset();
+    streamGroundedAnswer.mockReset();
   });
 
   it('abstains when grounded evidence is too weak', async () => {
@@ -104,7 +120,7 @@ describe('askQuery', () => {
         type: 'abstained',
       }),
     );
-    expect(generateGroundedAnswer).not.toHaveBeenCalled();
+    expect(streamGroundedAnswer).not.toHaveBeenCalled();
   });
 
   it('can still answer when reranking degraded but grounded evidence is strong', async () => {
@@ -140,10 +156,9 @@ describe('askQuery', () => {
         usedNormalizedQuery: false,
       },
     });
-    generateGroundedAnswer.mockResolvedValue({
-      answerMarkdown: 'Pack the charger [C1]. Bring your passport [C2].',
-      responseModel: 'google/gemini-3.1-pro-preview',
-    });
+    streamGroundedAnswer.mockReturnValue(
+      mockStreamedAnswer('Pack the charger [C1]. Bring your passport [C2].'),
+    );
     repairGroundedAnswer.mockResolvedValue({
       answerMarkdown: 'Pack the charger [C1]. Bring your passport [C2].',
       responseModel: 'google/gemini-3.1-pro-preview',
@@ -156,7 +171,7 @@ describe('askQuery', () => {
       }),
     );
 
-    expect(generateGroundedAnswer).toHaveBeenCalledTimes(1);
+    expect(streamGroundedAnswer).toHaveBeenCalledTimes(1);
     expect(events.at(-1)).toEqual(
       expect.objectContaining({
         answerMarkdown: 'Pack the charger [C1]. Bring your passport [C2].',
@@ -198,10 +213,9 @@ describe('askQuery', () => {
         usedNormalizedQuery: false,
       },
     });
-    generateGroundedAnswer.mockResolvedValue({
-      answerMarkdown: 'Pack the charger [C99]. Bring your passport [C2].',
-      responseModel: 'google/gemini-3.1-pro-preview',
-    });
+    streamGroundedAnswer.mockReturnValue(
+      mockStreamedAnswer('Pack the charger [C99]. Bring your passport [C2].'),
+    );
     repairGroundedAnswer.mockResolvedValue({
       answerMarkdown: 'Pack the charger [C1]. Bring your passport [C2].',
       responseModel: 'google/gemini-3.1-pro-preview',
@@ -217,7 +231,7 @@ describe('askQuery', () => {
     expect(repairGroundedAnswer).toHaveBeenCalledTimes(1);
     expect(events).toEqual(
       expect.arrayContaining([
-        expect.objectContaining({ phase: 'normalizing', type: 'status' }),
+        expect.objectContaining({ phase: 'retrieving', type: 'status' }),
         expect.objectContaining({ phase: 'answering', type: 'status' }),
         expect.objectContaining({ type: 'answer_delta' }),
         expect.objectContaining({
