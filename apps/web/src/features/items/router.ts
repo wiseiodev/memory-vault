@@ -1,14 +1,22 @@
 import { authed } from '@/rpc/procedures';
 
 import {
+  deleteItemInput,
+  deleteItemOutput,
   getItemInput,
   itemDetail,
   listItemsInput,
   listItemsOutput,
 } from './schemas';
-import { getItem, listItems } from './service';
+import { deleteItem, getItem, listItems } from './service';
 
 export const itemRouter = {
+  delete: authed
+    .input(deleteItemInput)
+    .output(deleteItemOutput)
+    .handler(async ({ context, input }) => {
+      return deleteItem({ ...input, userId: context.user.id });
+    }),
   get: authed
     .input(getItemInput)
     .output(itemDetail)

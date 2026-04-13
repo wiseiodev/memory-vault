@@ -1,13 +1,13 @@
 import type { Metadata } from 'next';
-
 import { SignOutButton } from '@/components/auth/sign-out-button';
+import { AccountDangerZoneCard, AccountExportCard } from '@/features/account';
 import { DeviceTokenListCard } from '@/features/device-tokens';
 import { requireSession } from '@/lib/server/auth/session';
 import { rpc } from '@/rpc/client';
 
 export const metadata: Metadata = {
   title: 'Settings | Memory Vault',
-  description: 'Account details and connected devices.',
+  description: 'Account details, data ownership, and connected devices.',
 };
 
 export default async function SettingsPage() {
@@ -71,6 +71,23 @@ export default async function SettingsPage() {
       </section>
 
       <DeviceTokenListCard deviceTokens={deviceTokens} />
+
+      <section className='space-y-3'>
+        <h3 className='text-sm font-semibold uppercase tracking-[0.18em] text-slate-500'>
+          Data ownership
+        </h3>
+        <p className='max-w-2xl text-sm leading-7 text-slate-600'>
+          You own your vault. Export a full copy at any time, and permanently
+          delete your account and its content whenever you like. Deletion
+          removes live data from active retrieval immediately. Backup copies may
+          persist in managed Postgres backups and S3 versioned storage for up to
+          30 days before being removed.
+        </p>
+      </section>
+
+      <AccountExportCard />
+
+      <AccountDangerZoneCard userEmail={session.user.email} />
     </div>
   );
 }

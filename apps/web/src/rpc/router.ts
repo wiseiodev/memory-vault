@@ -1,3 +1,4 @@
+import { accountRouter } from '@/features/account/router';
 import { captureRouter } from '@/features/captures/router';
 import { deviceTokenRouter } from '@/features/device-tokens/router';
 import { ingestionRouter } from '@/features/ingestion/router';
@@ -7,6 +8,7 @@ import { spaceRouter } from '@/features/spaces/router';
 import { uploadRouter } from '@/features/uploads/router';
 
 export const appRouter = {
+  account: accountRouter,
   captures: captureRouter,
   deviceTokens: deviceTokenRouter,
   ingestion: ingestionRouter,

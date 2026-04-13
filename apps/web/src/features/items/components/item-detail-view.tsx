@@ -1,6 +1,7 @@
 import Link from 'next/link';
 
 import type { ItemDetail } from '../schemas';
+import { DeleteItemButton } from './delete-item-button';
 
 type ItemDetailViewProps = {
   item: ItemDetail;
@@ -246,6 +247,23 @@ export function ItemDetailView({ item }: ItemDetailViewProps) {
             ))}
           </ul>
         )}
+      </section>
+
+      <section className='rounded-3xl border border-red-200/70 bg-red-50/70 p-5'>
+        <h3 className='text-sm font-semibold uppercase tracking-[0.18em] text-red-700'>
+          Delete item
+        </h3>
+        <p className='mt-2 text-sm leading-7 text-red-900/80'>
+          Removes this source and its derived segments and memories from active
+          retrieval immediately. The stored blob is removed from object storage.
+          Backup copies may persist within the documented retention window.
+        </p>
+        <div className='mt-4'>
+          <DeleteItemButton
+            redirectTo={`/app/spaces/${item.spaceId}`}
+            sourceItemId={item.sourceItemId}
+          />
+        </div>
       </section>
     </div>
   );

@@ -36,6 +36,15 @@ export const getItemInput = z.object({
   sourceItemId: z.string().trim().min(1),
 });
 
+export const deleteItemInput = z.object({
+  sourceItemId: z.string().trim().min(1),
+});
+
+export const deleteItemOutput = z.object({
+  deleted: z.literal(true),
+  sourceItemId: z.string(),
+});
+
 export const itemSegment = z.object({
   charEnd: z.number().int().nullable(),
   charStart: z.number().int().nullable(),

@@ -71,7 +71,16 @@ export type ItemDetailRow = {
   updatedAt: string;
 };
 
+export type DeleteOwnedItemResult = {
+  deletedObjectKeys: string[];
+};
+
 export type ItemRepository = {
+  deleteOwnedItem(input: {
+    deletedAt: Date;
+    sourceItemId: string;
+    userId: string;
+  }): Promise<DeleteOwnedItemResult | null>;
   getOwnedItem(input: {
     sourceItemId: string;
     userId: string;
@@ -140,6 +149,116 @@ function normalizeSegmentKind(
 
 export function createItemRepository(db: Db = getDb()): ItemRepository {
   return {
+    async deleteOwnedItem(input) {
+      return db.transaction(async (tx) => {
+        const [ownedItem] = await tx
+          .select({
+            sourceItemId: sourceItems.id,
+            spaceId: sourceItems.spaceId,
+          })
+          .from(sourceItems)
+          .innerJoin(spaces, eq(sourceItems.spaceId, spaces.id))
+          .where(
+            and(
+              eq(sourceItems.id, input.sourceItemId),
+              eq(spaces.ownerUserId, input.userId),
+              isNull(sourceItems.deletedAt),
+              isNull(spaces.deletedAt),
+            ),
+          )
+          .limit(1);
+
+        if (!ownedItem) {
+          return null;
+        }
+
+        const blobRows = await tx
+          .select({
+            objectKey: sourceBlobs.objectKey,
+            sourceBlobId: sourceBlobs.id,
+          })
+          .from(sourceBlobs)
+          .where(
+            and(
+              eq(sourceBlobs.sourceItemId, ownedItem.sourceItemId),
+              isNull(sourceBlobs.deletedAt),
+            ),
+          );
+
+        await tx
+          .update(sourceItems)
+          .set({
+            deletedAt: input.deletedAt,
+            status: 'archived',
+            updatedAt: input.deletedAt,
+          })
+          .where(eq(sourceItems.id, ownedItem.sourceItemId));
+
+        await tx
+          .update(segments)
+          .set({
+            deletedAt: input.deletedAt,
+            updatedAt: input.deletedAt,
+          })
+          .where(
+            and(
+              eq(segments.sourceItemId, ownedItem.sourceItemId),
+              isNull(segments.deletedAt),
+            ),
+          );
+
+        await tx
+          .update(sourceBlobs)
+          .set({
+            deletedAt: input.deletedAt,
+            updatedAt: input.deletedAt,
+          })
+          .where(
+            and(
+              eq(sourceBlobs.sourceItemId, ownedItem.sourceItemId),
+              isNull(sourceBlobs.deletedAt),
+            ),
+          );
+
+        const orphanedMemoryRows = await tx
+          .select({
+            memoryId: memories.id,
+          })
+          .from(memories)
+          .innerJoin(memoryCitations, eq(memoryCitations.memoryId, memories.id))
+          .where(
+            and(
+              eq(memoryCitations.sourceItemId, ownedItem.sourceItemId),
+              isNull(memories.deletedAt),
+            ),
+          )
+          .groupBy(memories.id)
+          .having(
+            sql`count(*) filter (where ${memoryCitations.sourceItemId} <> ${ownedItem.sourceItemId}) = 0`,
+          );
+
+        if (orphanedMemoryRows.length > 0) {
+          const orphanedIds = orphanedMemoryRows.map((row) => row.memoryId);
+          await tx
+            .update(memories)
+            .set({
+              deletedAt: input.deletedAt,
+              state: 'archived',
+              updatedAt: input.deletedAt,
+            })
+            .where(
+              and(
+                isNull(memories.deletedAt),
+                sql`${memories.id} = ANY(${orphanedIds})`,
+              ),
+            );
+        }
+
+        return {
+          deletedObjectKeys: blobRows.map((row) => row.objectKey),
+        };
+      });
+    },
     async listOwnedItems(input) {
       const segmentCountExpr = sql<number>`(
         select count(*)::int from ${segments}

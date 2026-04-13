@@ -1,3 +1,4 @@
+export { DeleteItemButton } from './components/delete-item-button';
 export { InboxList } from './components/inbox-list';
 export { ItemDetailView } from './components/item-detail-view';
 export { ItemLink } from './components/item-link';

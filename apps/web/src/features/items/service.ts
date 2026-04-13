@@ -2,6 +2,9 @@ import 'server-only';
 
 import { ORPCError } from '@orpc/server';
 
+import { deleteObject } from '@/features/uploads/storage';
+import { getRequestLogger } from '@/lib/evlog';
+
 import { createItemRepository, type ItemRepository } from './repository';
 import type { ItemDetail, ItemListItem } from './schemas';
 
@@ -19,8 +22,18 @@ type GetItemInput = {
   userId: string;
 };
 
+type DeleteItemInput = {
+  sourceItemId: string;
+  userId: string;
+};
+
 type Deps = {
   repository: ItemRepository;
+};
+
+type DeleteItemDeps = Deps & {
+  deleteObject: typeof deleteObject;
+  now: () => Date;
 };
 
 function truncatePreview(value: string | null | undefined) {
@@ -120,5 +133,45 @@ export async function getItem(
     status: row.status,
     title: row.title,
     updatedAt: row.updatedAt,
+  };
+}
+
+export async function deleteItem(
+  input: DeleteItemInput,
+  deps: DeleteItemDeps = {
+    deleteObject,
+    now: () => new Date(),
+    repository: createItemRepository(),
+  },
+): Promise<{ deleted: true; sourceItemId: string }> {
+  const result = await deps.repository.deleteOwnedItem({
+    deletedAt: deps.now(),
+    sourceItemId: input.sourceItemId,
+    userId: input.userId,
+  });
+
+  if (!result) {
+    throw new ORPCError('NOT_FOUND', {
+      message: 'Source item was not found.',
+    });
+  }
+
+  const logger = getRequestLogger();
+
+  for (const objectKey of result.deletedObjectKeys) {
+    try {
+      await deps.deleteObject({ objectKey });
+    } catch (error) {
+      logger.error('source_item.delete.blob_cleanup_failed', {
+        error: error instanceof Error ? error.message : String(error),
+        objectKey,
+        sourceItemId: input.sourceItemId,
+      });
+    }
+  }
+
+  return {
+    deleted: true as const,
+    sourceItemId: input.sourceItemId,
   };
 }
